@@ -64,3 +64,13 @@ Loop slots 1–9 remain fixed:
 - Added one-hit-per-key-down handling.
 - Added a 55 ms live-hit guard to prevent duplicate/multiple triggers during recording and overdub.
 - Playback-triggered events are not debounced.
+
+
+### V6 — simultaneous slots + double-hit fix
+- Multiple loop slots can play at the same time.
+- PLAY starts the selected slot without stopping other active slots.
+- PLAY/STOP toggles the selected slot; STOP remains a global stop.
+- Each slot has an independent playback clock.
+- Fixed the playback scheduler so an event is fired exactly once when its timestamp is crossed. The previous frame-window logic could fire the same event on multiple animation frames and cause audible double hits.
+- Increased live duplicate protection to 80 ms and added a recording-level duplicate-event guard.
+- Active slots receive a visual `playing` state.
