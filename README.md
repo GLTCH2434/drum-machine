@@ -96,3 +96,12 @@ Loop slots 1–9 remain fixed:
 - 16-step drum grid with the existing 9 drum samples.
 - Patterns are stored independently in slots.
 - Existing Loop Station mode and its 1–9 slot behavior remain unchanged.
+
+
+### V10 fixes
+- Fixed the Sequencer tab/grid initialization.
+- Number keys 1–9 select/play sequencer patterns only while Sequencer mode is active.
+- Clicking a step previews its drum sample.
+- Sequencer playback is driven by the master transport and fires each 1/16 step once.
+- Added a moving step highlight in the sequencer.
+- The Loop Station playhead now moves continuously during recording, even before the first hit.

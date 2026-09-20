@@ -310,7 +310,7 @@ function ensureSequencerPanel() {
     <div class="sequencer-help">1–9 = save/select & play pattern · Shift+1–9 = clear pattern · Space = play/stop</div>
   `;
 
-  const anchor = document.querySelector("main") || document.body;
+  const anchor = document.querySelector("#sequencerPane") || document.querySelector("main") || document.body;
   anchor.appendChild(panel);
 
   $("seqClear").addEventListener("click", () => {
@@ -332,50 +332,104 @@ function ensureSequencerPanel() {
 }
 
 function renderSequencer() {
-  const panel = ensureSequencerPanel();
-  panel.hidden = !sequencerMode;
+  const panel = document.getElementById("sequencerPanel");
+  const grid = document.getElementById("sequencerGrid");
+  const label = document.getElementById("patternSlotLabel");
+  if (!panel || !grid) return;
 
-  const grid = $("sequencerGrid");
-  if (!grid) return;
-  const pattern = patterns[currentPatternSlot-1];
+  panel.hidden = !sequencerMode;
+  const pattern = patterns[currentPatternSlot - 1];
+  if (!pattern) return;
 
   grid.innerHTML = "";
 
-  const corner=document.createElement("div");
-  corner.className="seq-corner";
+  const corner = document.createElement("div");
+  corner.className = "seq-corner";
   grid.appendChild(corner);
 
-  for(let s=0;s<SEQUENCER_STEPS;s++){
-    const h=document.createElement("div");
-    h.className="seq-step-number";
-    h.textContent=s+1;
+  for (let s = 0; s < SEQUENCER_STEPS; s++) {
+    const h = document.createElement("div");
+    h.className = "seq-step-number";
+    h.textContent = s + 1;
+    h.dataset.step = s;
     grid.appendChild(h);
   }
 
-  sequencerRows.forEach((row,r)=>{
-    const label=document.createElement("div");
-    label.className="seq-row-label";
-    label.textContent=ROW_LABELS[row];
-    grid.appendChild(label);
+  sequencerRows.forEach((row, r) => {
+    const rowLabel = document.createElement("div");
+    rowLabel.className = "seq-row-label";
+    rowLabel.textContent = ROW_LABELS[row];
+    grid.appendChild(rowLabel);
 
-    for(let s=0;s<SEQUENCER_STEPS;s++){
-      const cell=document.createElement("button");
-      cell.type="button";
-      cell.className="seq-cell";
-      cell.setAttribute("aria-label",`${ROW_LABELS[row]} step ${s+1}`);
-      cell.setAttribute("aria-pressed",pattern.steps[r][s]?"true":"false");
-      if(pattern.steps[r][s]) cell.classList.add("active");
-      if(s%4===0) cell.classList.add("beat");
+    for (let s = 0; s < SEQUENCER_STEPS; s++) {
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "seq-cell";
+      cell.dataset.row = r;
+      cell.dataset.step = s;
+      cell.setAttribute("aria-label", `${ROW_LABELS[row]} step ${s + 1}`);
+      cell.setAttribute("aria-pressed", pattern.steps[r][s] ? "true" : "false");
 
-      cell.addEventListener("click",()=>{
-        pattern.steps[r][s]=!pattern.steps[r][s];
+      if (pattern.steps[r][s]) cell.classList.add("active");
+      if (s % 4 === 0) cell.classList.add("beat");
+
+      cell.addEventListener("click", () => {
+        pattern.steps[r][s] = !pattern.steps[r][s];
+        if (pattern.steps[r][s]) {
+          ensureAudio();
+          playSample(SAMPLE_BY_ROW[row]);
+        }
         renderSequencer();
       });
+
       grid.appendChild(cell);
     }
   });
 
-  $("patternSlotLabel").textContent=`PATTERN ${currentPatternSlot}`;
+  if (label) label.textContent = `PATTERN ${currentPatternSlot}`;
+
+  updateSequencerPlayhead();
+}
+
+function updateSequencerPlayhead() {
+  const grid = document.getElementById("sequencerGrid");
+  if (!grid) return;
+
+  grid.querySelectorAll(".seq-step-number, .seq-cell").forEach(el => {
+    el.classList.remove("current-step");
+  });
+
+  if (!sequencerMode || !transportRunning) return;
+
+  const stepDuration = secondsPerBeat() / 4;
+  const position = currentMasterPosition();
+  const step = Math.floor(position / stepDuration) % SEQUENCER_STEPS;
+
+  grid.querySelectorAll(`[data-step="${step}"]`).forEach(el => {
+    el.classList.add("current-step");
+  });
+}
+
+function setSequencerStep(step, active) {
+  const pattern = patterns[currentPatternSlot - 1];
+  if (!pattern || step < 0 || step >= SEQUENCER_STEPS) return;
+
+  pattern.steps.forEach((row, r) => {
+    if (active && row[step]) {
+      playSample(SAMPLE_BY_ROW[sequencerRows[r]]);
+    }
+  });
+}
+
+function playCurrentPatternStep(step) {
+  const pattern = patterns[currentPatternSlot - 1];
+  if (!pattern) return;
+
+  for (let r = 0; r < sequencerRows.length; r++) {
+    if (pattern.steps[r][step]) {
+      playSample(SAMPLE_BY_ROW[sequencerRows[r]]);
+    }
+  }
 }
 
 function switchMainTab(mode) {
@@ -411,54 +465,50 @@ function patternStepTime(step, pattern) {
 }
 
 function playPatternSlot(slotNumber) {
-  const pattern=patterns[slotNumber-1];
-  if(!pattern) return;
+  if (slotNumber < 1 || slotNumber > 9) return;
 
-  currentPatternSlot=slotNumber;
-  const now=performance.now()/1000;
-  const beat=secondsPerBeat();
+  currentPatternSlot = slotNumber;
+  const pattern = patterns[slotNumber - 1];
+  if (!pattern) return;
 
-  // Play one pattern immediately, aligned to the current master clock.
-  // Patterns repeat every 16 sixteenth-notes (one 4/4 bar).
-  const patternLength=pattern.length*(beat/4);
-  const masterPos=transportRunning ? currentMasterPosition(now) : 0;
-  const start=now-(masterPos%patternLength);
+  ensureAudio();
 
-  for(let step=0;step<pattern.length;step++){
-    const delay=(start + patternStepTime(step,pattern)-now)*1000;
-    const safeDelay=Math.max(0,delay);
-    for(let r=0;r<sequencerRows.length;r++){
-      if(pattern.steps[r][step]){
-        window.setTimeout(()=>{
-          // Don't fire stale one-shot events if the transport was stopped.
-          if(transportRunning || sequencerMode) playSample(SAMPLE_BY_ROW[sequencerRows[r]]);
-        },safeDelay);
-      }
-    }
+  // Patterns use the same master clock as the loop station.
+  // Pressing a number selects the pattern; if transport is stopped, start it.
+  if (!transportRunning) {
+    masterLastPosition = 0;
+    masterStartTime = performance.now() / 1000;
+    transportRunning = true;
+    lastBeat = -1;
+    if (!masterAnimationId) masterAnimationId = requestAnimationFrame(masterTick);
   }
 
   renderSequencer();
+  updateTransportStatus();
 }
+
 
 // Number keys are pattern controls while Sequencer Mode is active.
 // They no longer merely select loop slots in this mode.
 function handleSequencerNumberKey(event) {
-  if(!sequencerMode) return false;
-  if(event.shiftKey && /^[1-9]$/.test(event.key)){
-    const n=Number(event.key);
-    patterns[n-1]={
-      steps:Array.from({length:9},()=>Array(SEQUENCER_STEPS).fill(false)),
-      length:SEQUENCER_STEPS
+  if (!sequencerMode) return false;
+
+  if (event.shiftKey && /^[1-9]$/.test(event.key)) {
+    const n = Number(event.key);
+    patterns[n - 1] = {
+      steps: Array.from({length: 9}, () => Array(SEQUENCER_STEPS).fill(false)),
+      length: SEQUENCER_STEPS
     };
-    if(currentPatternSlot===n) renderSequencer();
+    currentPatternSlot = n;
+    renderSequencer();
     return true;
   }
-  if(/^[1-9]$/.test(event.key)){
-    const n=Number(event.key);
-    currentPatternSlot=n;
-    playPatternSlot(n);
+
+  if (/^[1-9]$/.test(event.key)) {
+    playPatternSlot(Number(event.key));
     return true;
   }
+
   return false;
 }
 
@@ -770,9 +820,10 @@ function masterTick() {
 
   const wrapped = current < previous;
 
-  // Render selected slot position.
+  // Render selected slot position continuously, including while recording.
+  // This gives a moving visual cue even before the first drum hit exists.
   const selected = slots[selectedSlot];
-  if (selected && selected.events.length) {
+  if (selected) {
     const len = slotLength(selected);
     const pos = current % len;
     playheadEl.style.left = `${(pos / len) * 100}%`;
@@ -782,6 +833,29 @@ function masterTick() {
   for (let i = 0; i < slots.length; i++) {
     if (!playingSlots.has(i)) continue;
     playSlotEventsAtPosition(i, previous, current, wrapped);
+  }
+
+  // Sequencer: one master-clock step every 1/16 note. The step is fired once
+  // when the playhead crosses it, so it cannot double-trigger between frames.
+  if (sequencerMode) {
+    const stepLength = secondsPerBeat() / 4;
+    const previousStep = Math.floor(previous / stepLength);
+    const currentStep = Math.floor(current / stepLength);
+
+    if (wrapped || currentStep < previousStep) {
+      for (let s = previousStep + 1; s < Math.ceil(cycle / stepLength); s++) {
+        playCurrentPatternStep(s % SEQUENCER_STEPS);
+      }
+      for (let s = 0; s <= currentStep; s++) {
+        playCurrentPatternStep(s % SEQUENCER_STEPS);
+      }
+    } else if (currentStep > previousStep) {
+      for (let s = previousStep + 1; s <= currentStep; s++) {
+        playCurrentPatternStep(s % SEQUENCER_STEPS);
+      }
+    }
+
+    updateSequencerPlayhead();
   }
 
   // Metronome follows the master clock.
@@ -827,6 +901,7 @@ function beginRecording() {
   // this is zero. The resulting loop length is always musical.
   masterLastPosition = 0;
   masterStartTime = performance.now() / 1000;
+  masterLastPosition = 0;
 
   playingSlots.add(selectedSlot);
   transportRunning = true;
@@ -1205,6 +1280,7 @@ function initMainTabs() {
 
 // ---------------- INIT ----------------
 initMainTabs();
+renderSequencer();
 ensureSequencerPanel();
 
 renderPads();
