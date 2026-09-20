@@ -67,6 +67,21 @@ let slots = Array.from({length:9}, () => ({
   events: [], bpm:120, bars:4
 }));
 
+// FL-style step sequencer patterns. Each of the 9 numbered slots stores
+// one pattern independently from the loop-station event loop.
+const SEQUENCER_STEPS = 16;
+const sequencerRows = [
+  "kick", "snare", "closed_hihat", "open_hihat",
+  "crash", "ride", "clap", "tom_high", "tom_low"
+];
+
+let sequencerMode = false;
+let currentPatternSlot = 1;
+let patterns = Array.from({length:9}, () => ({
+  steps: Array.from({length:9}, () => Array(SEQUENCER_STEPS).fill(false)),
+  length: SEQUENCER_STEPS
+}));
+
 let selectedSlot = 0;
 let playing = false;
 let recording = false;
@@ -249,6 +264,186 @@ function triggerPad(key, fromPlayback = false) {
     events.sort((a, b) => a.time - b.time);
     renderEvents();
   }
+}
+
+
+// ---------------- SEQUENCER MODE ----------------
+
+const SAMPLE_BY_ROW = {
+  kick: "kickdrum",
+  snare: "snare",
+  closed_hihat: "closed_hihat",
+  open_hihat: "open_hihat",
+  crash: "crash",
+  ride: "ride",
+  clap: "clap",
+  tom_high: "tom_high",
+  tom_low: "tom_low"
+};
+
+const ROW_LABELS = {
+  kick:"Kick", snare:"Snare", closed_hihat:"Closed HH", open_hihat:"Open HH",
+  crash:"Crash", ride:"Ride", clap:"Clap", tom_high:"High Tom", tom_low:"Low Tom"
+};
+
+function ensureSequencerPanel() {
+  let panel = document.getElementById("sequencerPanel");
+  if (panel) return panel;
+
+  panel = document.createElement("section");
+  panel.id = "sequencerPanel";
+  panel.className = "sequencer-panel";
+  panel.innerHTML = `
+    <div class="sequencer-head">
+      <div>
+        <strong>STEP SEQUENCER</strong>
+        <span id="patternSlotLabel">PATTERN 1</span>
+      </div>
+      <div class="sequencer-actions">
+        <button type="button" id="seqClear">CLEAR PATTERN</button>
+        <button type="button" id="seqFill">FILL HH</button>
+      </div>
+    </div>
+    <div class="sequencer-grid-wrap">
+      <div id="sequencerGrid" class="sequencer-grid"></div>
+    </div>
+    <div class="sequencer-help">1–9 = save/select & play pattern · Shift+1–9 = clear pattern · Space = play/stop</div>
+  `;
+
+  const anchor = document.querySelector("main") || document.body;
+  anchor.appendChild(panel);
+
+  $("seqClear").addEventListener("click", () => {
+    patterns[currentPatternSlot-1] = {
+      steps: Array.from({length:9},()=>Array(SEQUENCER_STEPS).fill(false)),
+      length: SEQUENCER_STEPS
+    };
+    renderSequencer();
+  });
+
+  $("seqFill").addEventListener("click", () => {
+    const p = patterns[currentPatternSlot-1];
+    p.steps[2].fill(false);
+    for (let i=0;i<SEQUENCER_STEPS;i+=2) p.steps[2][i]=true;
+    renderSequencer();
+  });
+
+  return panel;
+}
+
+function renderSequencer() {
+  const panel = ensureSequencerPanel();
+  panel.style.display = sequencerMode ? "" : "none";
+
+  const grid = $("sequencerGrid");
+  if (!grid) return;
+  const pattern = patterns[currentPatternSlot-1];
+
+  grid.innerHTML = "";
+
+  const corner=document.createElement("div");
+  corner.className="seq-corner";
+  grid.appendChild(corner);
+
+  for(let s=0;s<SEQUENCER_STEPS;s++){
+    const h=document.createElement("div");
+    h.className="seq-step-number";
+    h.textContent=s+1;
+    grid.appendChild(h);
+  }
+
+  sequencerRows.forEach((row,r)=>{
+    const label=document.createElement("div");
+    label.className="seq-row-label";
+    label.textContent=ROW_LABELS[row];
+    grid.appendChild(label);
+
+    for(let s=0;s<SEQUENCER_STEPS;s++){
+      const cell=document.createElement("button");
+      cell.type="button";
+      cell.className="seq-cell";
+      cell.setAttribute("aria-label",`${ROW_LABELS[row]} step ${s+1}`);
+      cell.setAttribute("aria-pressed",pattern.steps[r][s]?"true":"false");
+      if(pattern.steps[r][s]) cell.classList.add("active");
+      if(s%4===0) cell.classList.add("beat");
+
+      cell.addEventListener("click",()=>{
+        pattern.steps[r][s]=!pattern.steps[r][s];
+        renderSequencer();
+      });
+      grid.appendChild(cell);
+    }
+  });
+
+  $("patternSlotLabel").textContent=`PATTERN ${currentPatternSlot}`;
+}
+
+function toggleSequencerMode() {
+  sequencerMode=!sequencerMode;
+  if(sequencerMode){
+    ensureSequencerPanel();
+    renderSequencer();
+  } else {
+    const p=$("sequencerPanel");
+    if(p) p.style.display="none";
+  }
+}
+
+function patternStepTime(step, pattern) {
+  // One step = 1/16 note.
+  return step * (secondsPerBeat() / 4);
+}
+
+function playPatternSlot(slotNumber) {
+  const pattern=patterns[slotNumber-1];
+  if(!pattern) return;
+
+  currentPatternSlot=slotNumber;
+  const now=performance.now()/1000;
+  const beat=secondsPerBeat();
+
+  // Play one pattern immediately, aligned to the current master clock.
+  // Patterns repeat every 16 sixteenth-notes (one 4/4 bar).
+  const patternLength=pattern.length*(beat/4);
+  const masterPos=transportRunning ? currentMasterPosition(now) : 0;
+  const start=now-(masterPos%patternLength);
+
+  for(let step=0;step<pattern.length;step++){
+    const delay=(start + patternStepTime(step,pattern)-now)*1000;
+    const safeDelay=Math.max(0,delay);
+    for(let r=0;r<sequencerRows.length;r++){
+      if(pattern.steps[r][step]){
+        window.setTimeout(()=>{
+          // Don't fire stale one-shot events if the transport was stopped.
+          if(transportRunning || sequencerMode) playSample(SAMPLE_BY_ROW[sequencerRows[r]]);
+        },safeDelay);
+      }
+    }
+  }
+
+  renderSequencer();
+}
+
+// Number keys are pattern controls while Sequencer Mode is active.
+// They no longer merely select loop slots in this mode.
+function handleSequencerNumberKey(event) {
+  if(!sequencerMode) return false;
+  if(event.shiftKey && /^[1-9]$/.test(event.key)){
+    const n=Number(event.key);
+    patterns[n-1]={
+      steps:Array.from({length:9},()=>Array(SEQUENCER_STEPS).fill(false)),
+      length:SEQUENCER_STEPS
+    };
+    if(currentPatternSlot===n) renderSequencer();
+    return true;
+  }
+  if(/^[1-9]$/.test(event.key)){
+    const n=Number(event.key);
+    currentPatternSlot=n;
+    playPatternSlot(n);
+    return true;
+  }
+  return false;
 }
 
 // ---------------- UI ----------------
@@ -924,6 +1119,11 @@ document.addEventListener("keydown", event => {
   const key = normalizeKey(event);
   if (!key) return;
 
+  if (handleSequencerNumberKey(event)) {
+    event.preventDefault();
+    return;
+  }
+
   // Some browser/OS combinations can deliver duplicate keydown notifications.
   // Treat a physical key as one hit until its keyup is received.
   if (heldKeys.has(key)) return;
@@ -974,7 +1174,26 @@ window.addEventListener("blur", () => {
   heldKeys.clear();
 });
 
+
+// Create the mode switch without disturbing the existing Loop Station layout.
+function ensureModeButton() {
+  if(document.getElementById("sequencerModeButton")) return;
+  const b=document.createElement("button");
+  b.type="button";
+  b.id="sequencerModeButton";
+  b.textContent="SEQUENCER MODE";
+  b.title="Switch between Loop Station and FL-style Step Sequencer";
+  b.addEventListener("click",()=>{
+    toggleSequencerMode();
+    b.classList.toggle("active",sequencerMode);
+  });
+  const host=document.querySelector(".controls") || document.querySelector("header") || document.body;
+  host.prepend(b);
+}
+
 // ---------------- INIT ----------------
+ensureModeButton();
+ensureSequencerPanel();
 
 renderPads();
 renderMapping();

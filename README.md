@@ -86,3 +86,13 @@ Loop slots 1–9 remain fixed:
 - Quantization snaps recorded hits to the selected beat grid.
 - Playback uses an event cursor instead of a frame-time window, preventing repeated playback of the same event.
 - Global STOP stops the entire transport; PLAY toggles the selected slot.
+
+
+### V8 — FL-style Step Sequencer
+- Added a separate Sequencer Mode.
+- 9 numbered pattern slots correspond to keys 1–9.
+- In Sequencer Mode, pressing 1–9 selects, saves/uses, and plays that pattern.
+- Shift+1–9 clears the corresponding pattern.
+- 16-step drum grid with the existing 9 drum samples.
+- Patterns are stored independently in slots.
+- Existing Loop Station mode and its 1–9 slot behavior remain unchanged.
