@@ -7,6 +7,15 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+    <nav class="mode-tabs" role="tablist" aria-label="Drum workstation modes">
+      <button type="button" id="loopStationTab" class="mode-tab active" role="tab"
+              aria-selected="true" aria-controls="loopStationPane">LOOP STATION</button>
+      <button type="button" id="sequencerTab" class="mode-tab" role="tab"
+              aria-selected="false" aria-controls="sequencerPane">SEQUENCER</button>
+    </nav>
+    <section id="loopStationPane" class="mode-pane">
+
 <main class="app">
 <header>
   <div>
@@ -104,6 +113,29 @@
 </p>
 <p id="sampleStatus" class="sample-status">Loading samples…</p>
 </main>
+
+    </section>
+
+    <section id="sequencerPane" class="mode-pane" role="tabpanel" aria-labelledby="sequencerTab" hidden>
+      <section id="sequencerPanel" class="sequencer-panel">
+        <div class="sequencer-head">
+          <div>
+            <strong>STEP SEQUENCER</strong>
+            <span id="patternSlotLabel">PATTERN 1</span>
+          </div>
+          <div class="sequencer-actions">
+            <button type="button" id="seqClear">CLEAR PATTERN</button>
+            <button type="button" id="seqFill">FILL HH</button>
+          </div>
+        </div>
+        <div class="sequencer-grid-wrap">
+          <div id="sequencerGrid" class="sequencer-grid"></div>
+        </div>
+        <div class="sequencer-help">
+          1–9 = select & play pattern · Shift+1–9 = clear pattern · Space = play/stop
+        </div>
+      </section>
+    </section>
 <script src="app.js"></script>
 </body>
 </html>

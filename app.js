@@ -333,7 +333,7 @@ function ensureSequencerPanel() {
 
 function renderSequencer() {
   const panel = ensureSequencerPanel();
-  panel.style.display = sequencerMode ? "" : "none";
+  panel.hidden = !sequencerMode;
 
   const grid = $("sequencerGrid");
   if (!grid) return;
@@ -378,15 +378,31 @@ function renderSequencer() {
   $("patternSlotLabel").textContent=`PATTERN ${currentPatternSlot}`;
 }
 
-function toggleSequencerMode() {
-  sequencerMode=!sequencerMode;
-  if(sequencerMode){
-    ensureSequencerPanel();
-    renderSequencer();
-  } else {
-    const p=$("sequencerPanel");
-    if(p) p.style.display="none";
+function switchMainTab(mode) {
+  sequencerMode = mode === "sequencer";
+
+  const loopPane = document.getElementById("loopStationPane");
+  const seqPane = document.getElementById("sequencerPane");
+  const loopTab = document.getElementById("loopStationTab");
+  const seqTab = document.getElementById("sequencerTab");
+
+  if (loopPane) loopPane.hidden = sequencerMode;
+  if (seqPane) seqPane.hidden = !sequencerMode;
+
+  if (loopTab) {
+    loopTab.classList.toggle("active", !sequencerMode);
+    loopTab.setAttribute("aria-selected", String(!sequencerMode));
   }
+  if (seqTab) {
+    seqTab.classList.toggle("active", sequencerMode);
+    seqTab.setAttribute("aria-selected", String(sequencerMode));
+  }
+
+  renderSequencer();
+}
+
+function toggleSequencerMode() {
+  switchMainTab(!sequencerMode ? "sequencer" : "loop");
 }
 
 function patternStepTime(step, pattern) {
@@ -1175,24 +1191,20 @@ window.addEventListener("blur", () => {
 });
 
 
-// Create the mode switch without disturbing the existing Loop Station layout.
-function ensureModeButton() {
-  if(document.getElementById("sequencerModeButton")) return;
-  const b=document.createElement("button");
-  b.type="button";
-  b.id="sequencerModeButton";
-  b.textContent="SEQUENCER MODE";
-  b.title="Switch between Loop Station and FL-style Step Sequencer";
-  b.addEventListener("click",()=>{
-    toggleSequencerMode();
-    b.classList.toggle("active",sequencerMode);
-  });
-  const host=document.querySelector(".controls") || document.querySelector("header") || document.body;
-  host.prepend(b);
+
+
+function initMainTabs() {
+  const loopTab = document.getElementById("loopStationTab");
+  const seqTab = document.getElementById("sequencerTab");
+
+  if (loopTab) loopTab.addEventListener("click", () => switchMainTab("loop"));
+  if (seqTab) seqTab.addEventListener("click", () => switchMainTab("sequencer"));
+
+  switchMainTab("loop");
 }
 
 // ---------------- INIT ----------------
-ensureModeButton();
+initMainTabs();
 ensureSequencerPanel();
 
 renderPads();
