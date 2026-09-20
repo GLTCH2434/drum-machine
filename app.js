@@ -179,6 +179,7 @@ function loopStopSlot(i){
   renderLoopSlots(); setLoopStatus(loopPlaying.size?`PLAYING ${loopPlaying.size}`:"READY");
 }
 function loopStartTransport(){
+  stopOtherMode("loop");
   ensureAudio();
   if(loopFrame) return;
   loopStart=performance.now()/1000-loopPrevPos;
@@ -191,6 +192,7 @@ function loopStopTransport(){
   $("playhead").style.left="0%"; $("loopPosition").textContent=`0.00 / ${loopLength().toFixed(2)} s`;
 }
 function loopPlaySelected(){
+  stopOtherMode("loop");
   if(loopPlaying.has(loopSelected)){ loopStopSlot(loopSelected); return; }
   if(!loopSlot().events.length) return;
   loopStartTransport(); loopStartSlot(loopSelected);
@@ -298,7 +300,7 @@ const seqSamples=Object.fromEntries(SEQ_ROWS.map(([id])=>[id,id]));
 const defaultPattern=()=>({steps:16,rows:Array.from({length:9},()=>Array(16).fill(false))});
 const seqPatterns=Array.from({length:9},defaultPattern);
 let seqSelected=0, seqPlaying=false, seqFrame=null, seqStart=0, seqPrevStep=-1;
-let seqBpm=120, seqSteps=16, seqSwing=0, seqMetronome=false;
+let seqBpm=120, seqSteps=16, seqSwing=0, seqQuant="1/16", seqMetronome=false;
 let seqMutedRows=new Set();
 
 function seqStepSeconds(){ return 60/seqBpm/4; }
@@ -306,7 +308,7 @@ function seqLength(){ return seqSteps*seqStepSeconds(); }
 function seqSetStatus(t){ $("seqStatus").textContent=t; }
 function seqPattern(){ return seqPatterns[seqSelected]; }
 function renderSeqSlots(){
-  $("seqPatternNumber").textContent=seqSelected+1;
+  $("patternSlotNumber").textContent=`PATTERN ${seqSelected+1}`;
   document.querySelectorAll(".seq-slot").forEach((b,i)=>b.classList.toggle("selected",i===seqSelected));
 }
 function renderSequencer(){
@@ -373,6 +375,7 @@ function seqTick(){
   seqFrame=requestAnimationFrame(seqTick);
 }
 function seqStartTransport(){
+  stopOtherMode("seq");
   ensureAudio();
   if(seqPlaying)return;
   seqPlaying=true;seqStart=performance.now()/1000;seqPrevStep=-1;
@@ -385,6 +388,25 @@ function seqStopTransport(){
   if(seqFrame)cancelAnimationFrame(seqFrame);
   seqFrame=null;seqPrevStep=-1;updateSeqPlayhead();seqSetStatus("READY");
 }
+
+function seqPlayAll(){
+  stopOtherMode("seq");
+  seqPlaying = true;
+  seqStart = performance.now();
+  seqPrevStep = -1;
+  seqSetStatus("PLAYING ALL PATTERNS");
+  if(seqFrame) cancelAnimationFrame(seqFrame);
+  seqFrame = requestAnimationFrame(seqTick);
+}
+function seqStopAll(){
+  seqPlaying = false;
+  if(seqFrame) cancelAnimationFrame(seqFrame);
+  seqFrame = null;
+  seqPrevStep = -1;
+  document.querySelectorAll(".seq-cell.current").forEach(el=>el.classList.remove("current"));
+  seqSetStatus("STOPPED");
+}
+
 function seqTogglePlay(){seqPlaying?seqStopTransport():seqStartTransport();}
 function seqClear(){
   seqPatterns[seqSelected]=defaultPattern();renderSequencer();seqSetStatus("CLEARED");
@@ -401,6 +423,7 @@ function seqRandomize(){
   renderSequencer();
 }
 function seqSelect(n){
+  stopOtherMode("seq");
   seqSelected=n;renderSequencer();
   if(!seqPlaying)seqStartTransport();
   seqSetStatus(`PLAYING PATTERN ${n+1}`);
@@ -485,25 +508,6 @@ function init(){
   renderPads();renderLoopSlots();syncLoopControls();renderLoopEvents();renderSequencer();
   updateControlBadges();
 
-  $("audioStart").onclick=async()=>{ensureAudio();await loadSamples();};
-  $("record").onclick=()=>runControl("record");
-  $("play").onclick=()=>runControl("play");
-  $("overdub").onclick=()=>runControl("overdub");
-  $("stop").onclick=()=>runControl("stop");
-  $("clear").onclick=()=>runControl("clear");
-  $("clearAll").onclick=()=>runControl("clearAll");
-  $("metronome").onclick=()=>runControl("metronome");
-
-  $("loopBpm").oninput=e=>{
-    loopSlot().bpm=Number(e.target.value);$("loopBpmOut").value=e.target.value;renderLoopEvents();
-  };
-  $("loopBars").onchange=e=>{loopSlot().bars=Number(e.target.value);renderLoopEvents();};
-  $("loopQuantize").onchange=()=>setLoopStatus("QUANTIZE "+$("loopQuantize").selectedOptions[0].textContent);
-
-  $("seqBpm").oninput=e=>{seqBpm=Number(e.target.value);$("seqBpmOut").value=seqBpm;};
-  $("seqSteps").onchange=e=>{
-    seqSteps=Number(e.target.value);
-    seqPatterns.forEach(p=>{
       const old=p.rows;
       p.steps=seqSteps;
       p.rows=Array.from({length:9},(_,r)=>Array.from({length:seqSteps},(_,s)=>old[r]?.[s]||false));
@@ -534,6 +538,7 @@ function init(){
   loadSamples();
 }
 function switchMode(mode){
+  stopOtherMode(mode);
   const seq=mode==="seq";
   $("loopPane").hidden=seq;$("seqPane").hidden=!seq;
   $("loopTab").classList.toggle("active",!seq);$("seqTab").classList.toggle("active",seq);

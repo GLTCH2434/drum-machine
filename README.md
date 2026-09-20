@@ -114,3 +114,12 @@ Loop slots 1–9 remain fixed:
 - In Sequencer mode, 1–9 select/play patterns and Shift+1–9 clear them.
 - Sequencer controls: 16/32 steps, BPM 60–200, swing control, play, stop, metronome, clear, fill hi-hat, randomize, and per-row mute.
 - Loop controls: BPM, bars, quantization, record, play selected, overdub, global stop, clear selected, clear all, metronome, and moving recording/playback cue.
+
+
+## V12 changes
+- Removed the Start Audio button.
+- Samples are loaded automatically from `samples/` on page load.
+- Loop Station and Sequencer transports are mutually exclusive.
+- Sequencer has independent Play/Pause, Play All, Stop All, BPM, steps, swing, quantization, metronome and editing controls.
+- Switching modes stops the other mode.
+- Fixed the sequencer pattern label element ID.

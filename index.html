@@ -16,7 +16,6 @@
 <main class="app">
 <header>
   <div><p class="eyebrow">INDEPENDENT LOOP WORKSTATION</p><h1>Drum Loop Station</h1></div>
-  <button id="audioStart" class="primary">START / LOAD AUDIO</button>
 </header>
 
 <section class="slots-panel">
@@ -71,11 +70,15 @@
 </section>
 
 <section class="seq-transport">
- <button id="seqPlay" class="primary">▶ PLAY</button>
+ <button id="seqPlayAll" class="control-btn">PLAY ALL</button>
+        <button id="seqStopAll" class="control-btn">STOP ALL</button>
+        <button id="seqPlay" class="primary">▶ PLAY</button>
  <button id="seqStop">■ STOP</button>
  <label>BPM <input id="seqBpm" type="range" min="60" max="200" value="120"><output id="seqBpmOut">120</output></label>
  <label>STEPS <select id="seqSteps"><option value="16" selected>16</option><option value="32">32</option></select></label>
- <label>SWING <input id="seqSwing" type="range" min="0" max="60" value="0"><output id="seqSwingOut">0%</output></label>
+ <label>SWING <select id="seqQuant" class="select"><option value="off">OFF</option><option value="1/4">1/4</option><option value="1/8">1/8</option><option value="1/16" selected>1/16</option><option value="1/32">1/32</option></select>
+          <label>QUANTIZATION</label>
+          <input id="seqSwing" type="range" min="0" max="60" value="0"><output id="seqSwingOut">0%</output></label>
  <button id="seqMetronome">METRONOME: OFF</button>
 </section>
 
