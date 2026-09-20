@@ -1,65 +1,329 @@
-const SAMPLE_URLS={kick:"samples/kickdrum.wav",snare:"samples/snare.wav",closed_hihat:"samples/closed_hihat.wav",open_hihat:"samples/open_hihat.wav",crash:"samples/crash.wav",ride:"samples/ride.wav",clap:"samples/clap.wav",tom_high:"samples/tom_high.wav",tom_low:"samples/tom_low.wav"};
-const PAD_DEFS=[["A","kick","Kick"],["S","snare","Snare"],["D","snare","Snare"],["F","closed_hihat","Closed HH"],["G","closed_hihat","Closed HH"],["H","open_hihat","Open HH"],["J","crash","Crash"],["K","ride","Ride"],["L","clap","Clap"],["Z","clap","Clap"],["X","tom_high","High Tom"],["C","tom_low","Low Tom"]];
-const ROWS=["kick","snare","closed_hihat","open_hihat","crash","ride","clap","tom_high","tom_low"];
-const NAMES={kick:"Kick",snare:"Snare",closed_hihat:"Closed HH",open_hihat:"Open HH",crash:"Crash",ride:"Ride",clap:"Clap",tom_high:"High Tom",tom_low:"Low Tom"};
-const DEFAULT_PAD=Object.fromEntries(PAD_DEFS.map(([k,p])=>[k,p]));
-const DEFAULT_CTRL={r:"record", " ":"playStop",t:"overdub","escape":"stop","backspace":"clear","m":"metronome"};
-let padMap=JSON.parse(localStorage.getItem("drumLoopPadMapping")||"null")||DEFAULT_PAD;
-let ctrlMap=JSON.parse(localStorage.getItem("drumLoopControlMapping")||"null")||DEFAULT_CTRL;
+'use strict';
+const $ = id => document.getElementById(id);
+const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, Number(v) || a));
 
-const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-const buffers={}; const keysDown=new Set(); const lastLive={};
-async function loadSamples(){let ok=0;for(const [name,url] of Object.entries(SAMPLE_URLS)){try{const r=await fetch(url);if(!r.ok)throw Error(r.status);buffers[name]=await audioCtx.decodeAudioData(await r.arrayBuffer());ok++}catch(e){console.warn("Could not load sample:",url,e)}}document.querySelector("#sampleStatus").textContent=`${ok}/${Object.keys(SAMPLE_URLS).length} SAMPLES READY`;}
-async function resume(){if(audioCtx.state==="suspended")await audioCtx.resume()}
-function playSample(name,fromPlayback=false){const b=buffers[name];if(!b)return;const s=audioCtx.createBufferSource();s.buffer=b;s.connect(audioCtx.destination);s.start()}
-function livePad(name,key){const now=performance.now();if(lastLive[key]&&now-lastLive[key]<80)return;lastLive[key]=now;playSample(name,false);document.querySelectorAll(`.pad[data-pad="${name}"]`).forEach(x=>{x.classList.add("hit");setTimeout(()=>x.classList.remove("hit"),80)})}
+/* ---------- Samples & pads ---------- */
+const ROWS = [['kick','Kick','kickdrum'],['snare','Snare','snare'],['closed_hihat','Closed HH','closed_hihat'],['open_hihat','Open HH','open_hihat'],['crash','Crash','crash'],['ride','Ride','ride'],['clap','Clap','clap'],['tom_high','High Tom','tom_high'],['tom_low','Low Tom','tom_low']];
+const PADS = [0,1,1,2,2,3,4,5,6,6,7,8]; // pad index -> ROWS index
+const DEF_PAD = {a:0,s:1,d:2,f:3,g:4,h:5,j:6,k:7,l:8,z:9,x:10,c:11};
+const DEF_CTL = {r:'record',' ':'playstop',t:'overdub',Escape:'stop',Backspace:'clearSel',m:'metro'};
+const CTLS = [['record','Record'],['playstop','Play / Stop'],['overdub','Overdub'],['stop','Stop'],['clearSel','Clear selected slot'],['clearAll','Clear all'],['metro','Metronome']];
+const QS = ['OFF','1/4','1/8','1/16','1/32'];
+const KP = 'drumLoopPadMapping', KC = 'drumLoopControlMapping';
+const readMap = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) || { ...d }; } catch { return { ...d }; } };
+const padMap = readMap(KP, DEF_PAD), ctlMap = readMap(KC, DEF_CTL);
+const saveMaps = () => { try { localStorage.setItem(KP, JSON.stringify(padMap)); localStorage.setItem(KC, JSON.stringify(ctlMap)); } catch {} };
 
-const loop={slots:Array.from({length:9},()=>({events:[],bpm:120,bars:4})),selected:0,bpm:120,bars:4,quant:16,playing:false,recording:false,overdub:false,metro:false,start:0,frame:0,recordEvents:[],recordStart:0};
-const seq={patterns:Array.from({length:9},()=>({steps:16,rows:Object.fromEntries(ROWS.map(r=>[r,Array(16).fill(false)]))})),selected:0,bpm:150,steps:16,swing:0,quant:16,metro:false,playing:false,playAll:false,start:0,frame:0,prevStep:-1,muted:new Set()};
+/* ---------- Audio ---------- */
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const buf = {};
+async function loadAll() {
+  await Promise.all(ROWS.map(async ([n, , f]) => {
+    const url = `samples/${f}.wav`;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      buf[n] = await ctx.decodeAudioData(await r.arrayBuffer());
+    } catch (e) { console.warn('Could not load sample:', url, e); }
+  }));
+}
+const wake = () => { if (ctx.state === 'suspended') ctx.resume(); };
+addEventListener('pointerdown', wake); addEventListener('keydown', wake);
 
-const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
-function loopDuration(){return loop.bars*4*60/loop.bpm}
-function stopOther(mode){if(mode==="loop")seqStop();else loopStopAll()}
-function loopStopAll(){loop.playing=false;loop.recording=false;loop.overdub=false;cancelAnimationFrame(loop.frame);$("#loopPlayhead").style.display="none";$("#loopTransportState").textContent="STOPPED";$("#loopModeState").textContent="READY"}
-function loopStart(){stopOther("loop");loop.playing=true;loop.start=audioCtx.currentTime;$("#loopTransportState").textContent="PLAYING";scheduleLoopFrame()}
-function loopRecord(){stopOther("loop");loop.recording=true;loop.playing=true;loop.overdub=false;loop.recordEvents=[];loop.recordStart=performance.now();loop.start=audioCtx.currentTime;$("#loopTransportState").textContent="RECORDING";scheduleLoopFrame()}
-function loopOverdub(){const s=loop.slots[loop.selected];if(!s.events.length)return;stopOther("loop");loop.overdub=true;loop.playing=true;loop.start=audioCtx.currentTime;loop.recordStart=performance.now();$("#loopTransportState").textContent="OVERDUB";scheduleLoopFrame()}
-function quantizeTime(t){if(!loop.quant)return t;const grid=60/loop.bpm*(4/loop.quant);return Math.round(t/grid)*grid}
-function recordPad(pad){if(!loop.recording&&!loop.overdub)return;const t=quantizeTime((performance.now()-loop.recordStart)/1000);if(t<=loopDuration())loop.recordEvents.push({time:t,pad})}
-function finishRecord(){const s=loop.slots[loop.selected];const events=loop.recordEvents.slice();if(loop.overdub)s.events=s.events.concat(events).sort((a,b)=>a.time-b.time);else s.events=events;s.bpm=loop.bpm;s.bars=loop.bars;loop.recording=false;loop.overdub=false;loop.playing=true;loop.start=audioCtx.currentTime;renderLoopSlots();renderTimeline();$("#loopTransportState").textContent="PLAYING"}
-function scheduleLoopFrame(){cancelAnimationFrame(loop.frame);const tick=()=>{if(!loop.playing)return;const dur=loopDuration();const pos=(audioCtx.currentTime-loop.start)%dur;$("#loopPlayhead").style.left=(pos/dur*100)+"%";$("#loopPlayhead").style.display="block";$("#loopPosition").textContent=`${pos.toFixed(2)} / ${dur.toFixed(2)} s`;if(loop.recording||loop.overdub){if((performance.now()-loop.recordStart)/1000>=dur)finishRecord()}const s=loop.slots[loop.selected];if(!loop.recording&&s.events.length){for(const e of s.events){const prev=(pos-(1/60));if(e.time>=Math.max(0,prev)&&e.time<pos)playSample(e.pad,true)}}loop.frame=requestAnimationFrame(tick)};loop.frame=requestAnimationFrame(tick)}
-function selectLoop(i){loop.selected=i;renderLoopSlots();renderTimeline()}
-function renderLoopSlots(){$("#loopSlots").innerHTML=loop.slots.map((s,i)=>`<button class="slot ${i===loop.selected?"selected":""} ${s.events.length?"recorded":""}" data-i="${i}">${i+1}<br><small>${s.events.length?s.events.length+" hits":"EMPTY"}</small></button>`).join("");$$(".slot").forEach(b=>b.onclick=()=>selectLoop(+b.dataset.i))}
-function renderTimeline(){const s=loop.slots[loop.selected],dur=loopDuration();$("#loopEvents").innerHTML=s.events.map(e=>`<i class="event-dot" style="left:${Math.min(100,e.time/dur*100)}%" title="${NAMES[e.pad]||e.pad}"></i>`).join("");$("#loopPosition").textContent=`0.00 / ${dur.toFixed(2)} s`}
-function clearLoop(i=loop.selected){loop.slots[i].events=[];if(loop.recording&&i===loop.selected)loop.recordEvents=[];renderLoopSlots();renderTimeline()}
-function clearAllLoops(){loop.slots.forEach(s=>s.events=[]);renderLoopSlots();renderTimeline()}
+const lastLive = {};
+function playSample(name, fromPlayback = false, when = 0) {
+  const b = buf[name];
+  if (!b) return false;
+  if (!fromPlayback) { // live input only: duplicate guard
+    const t = performance.now();
+    if (t - (lastLive[name] || 0) < 80) return false;
+    lastLive[name] = t;
+  }
+  const s = ctx.createBufferSource();
+  s.buffer = b; s.connect(ctx.destination); s.start(when);
+  return true;
+}
+function click(when, accent) {
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.frequency.value = accent ? 1500 : 1000;
+  g.gain.setValueAtTime(.3, when); g.gain.exponentialRampToValueAtTime(.001, when + .05);
+  o.connect(g); g.connect(ctx.destination); o.start(when); o.stop(when + .06);
+}
 
-function seqStop(){seq.playing=false;seq.playAll=false;cancelAnimationFrame(seq.frame);seq.prevStep=-1;$$(".cell.current").forEach(c=>c.classList.remove("current"));$("#seqTransportState").textContent="STOPPED"}
-function seqStart(all=false){stopOther("seq");seq.playing=true;seq.playAll=all;seq.start=audioCtx.currentTime;seq.prevStep=-1;$("#seqTransportState").textContent=all?"PLAY ALL":"PLAYING";scheduleSeqFrame()}
-function stepDuration(){return 60/seq.bpm/4}
-function scheduleSeqFrame(){cancelAnimationFrame(seq.frame);const tick=()=>{if(!seq.playing)return;const elapsed=audioCtx.currentTime-seq.start;let step=Math.floor(elapsed/stepDuration())%seq.steps;const cells=$$(".cell.current");cells.forEach(c=>c.classList.remove("current"));$$(`.cell[data-step="${step}"]`).forEach(c=>c.classList.add("current"));if(step!==seq.prevStep){if(step===0&&seq.playAll){seq.selected=(seq.selected+1)%9;renderSeqGrid()}const p=seq.patterns[seq.selected];ROWS.forEach(r=>{if(p.rows[r][step]&&!seq.muted.has(r))playSample(r,true)});if(seq.metro&&step%4===0)metronomeClick(step===0)}seq.prevStep=step;seq.frame=requestAnimationFrame(tick)};seq.frame=requestAnimationFrame(tick)}
-function metronomeClick(accent=false){const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=accent?1200:800;g.gain.setValueAtTime(.08,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.05);o.connect(g).connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.06)}
-function renderSeqSlots(){$("#seqSlots").innerHTML=seq.patterns.map((p,i)=>`<button class="slot ${i===seq.selected?"selected":""}" data-i="${i}">P${i+1}<br><small>${p.steps} STEPS</small></button>`).join("");$$("#seqSlots .slot").forEach(b=>b.onclick=()=>{seq.selected=+b.dataset.i;renderSeqSlots();renderSeqGrid()})}
-function renderSeqGrid(){const p=seq.patterns[seq.selected];$("#seqGrid").innerHTML=ROWS.map(r=>`<div class="seq-row"><div class="row-label"><button class="mute ${seq.muted.has(r)?"active":""}" data-mute="${r}">M</button>${NAMES[r]}</div>${Array.from({length:p.steps},(_,i)=>`<button class="cell ${p.rows[r][i]?"on":""}" data-row="${r}" data-step="${i}"></button>`).join("")}</div>`).join("");$$(".cell").forEach(c=>c.onclick=()=>{const r=c.dataset.row,i=+c.dataset.step;p.rows[r][i]=!p.rows[r][i];c.classList.toggle("on",p.rows[r][i]);if(p.rows[r][i])playSample(r)});$$(".mute").forEach(b=>b.onclick=()=>{const r=b.dataset.mute;seq.muted.has(r)?seq.muted.delete(r):seq.muted.add(r);renderSeqGrid()})}
-function clearSeq(){const p=seq.patterns[seq.selected];p.rows=Object.fromEntries(ROWS.map(r=>[r,Array(p.steps).fill(false)]));renderSeqGrid()}
-function fillHH(){const p=seq.patterns[seq.selected];for(let i=0;i<p.steps;i+=2)p.rows.closed_hihat[i]=true;renderSeqGrid()}
-function randomize(){const p=seq.patterns[seq.selected];ROWS.forEach(r=>p.rows[r]=p.rows[r].map(()=>Math.random()<.22));renderSeqGrid()}
+/* ---------- State (kept separate per instrument) ---------- */
+let mode = 'loop';
+const L = { slots: Array.from({length: 9}, () => ({events: [], bpm: 120, bars: 4})), sel: 0, playing: false, rec: false, over: false, metro: false, bpm: 120, bars: 4, q: 'OFF', start: 0, frame: 0, prev: 0, beat: -1 };
+const S = { pats: Array.from({length: 9}, () => ROWS.map(() => Array(32).fill(false))), sel: 0, playing: false, bpm: 120, steps: 16, swing: 0, q: '1/16', metro: false, muted: ROWS.map(() => false), step: 0, next: 0, timer: 0, frame: 0, queue: [], arr: false, nextBeat: 0, beatN: 0, shown: -1 };
 
-function renderPads(){const current={};Object.entries(padMap).forEach(([k,p])=>{current[p]??=[];current[p].push(k.toUpperCase())});$("#pads").innerHTML=ROWS.map(p=>{const key=(current[p]||[])[0]||"—";return `<button class="pad" data-pad="${p}"><kbd>${key}</kbd><strong>${NAMES[p]}</strong></button>`}).join("");$$(".pad").forEach(b=>b.onclick=async()=>{await resume();livePad(b.dataset.pad,"mouse");recordPad(b.dataset.pad)})}
-function normalizeKey(e){return e.key.length===1?e.key.toLowerCase():e.key.toLowerCase()}
-function handleControl(c){if(c==="record")loopRecord();if(c==="playStop")loop.playing?loopStopAll():loopStart();if(c==="overdub")loopOverdub();if(c==="stop")loopStopAll();if(c==="clear")clearLoop();if(c==="metronome"){loop.metro=!loop.metro;$("#loopMetro").textContent=`METRO ${loop.metro?"ON":"OFF"}`}}
-document.addEventListener("keydown",async e=>{await resume();if(e.repeat)return;const k=normalizeKey(e);if($("#mappingDialog").open){if(e.target.classList.contains("map-key"))return;return}if(/^[1-9]$/.test(k)){const i=+k-1;if(e.shiftKey){if(activeMode==="loop")clearLoop(i);else seq.patterns[i].rows=Object.fromEntries(ROWS.map(r=>[r,Array(seq.patterns[i].steps).fill(false)]));renderSeqSlots();renderSeqGrid()}else{if(activeMode==="loop")selectLoop(i);else{seq.selected=i;renderSeqSlots();renderSeqGrid();seqStart(false)}}e.preventDefault();return}if(e.key==="Escape"){if(activeMode==="loop")loopStopAll();else seqStop();return}if(e.key==="Backspace"){if(activeMode==="loop")clearLoop();return}if(ctrlMap[k]&&activeMode==="loop"){handleControl(ctrlMap[k]);e.preventDefault();return}if(padMap[k]&&!keysDown.has(k)){keysDown.add(k);livePad(padMap[k],k);recordPad(padMap[k]);e.preventDefault()}});document.addEventListener("keyup",e=>keysDown.delete(normalizeKey(e)));
+function stopOtherMode(m) { if (m === 'loop') seqStopTransport(); else loopGlobalStop(); }
 
-let activeMode="loop";
-$$(".mode-tab").forEach(b=>b.onclick=()=>{const m=b.dataset.mode;if(m===activeMode)return;if(m==="loop")seqStop();else loopStopAll();activeMode=m;$$(".mode-tab").forEach(x=>x.classList.toggle("active",x===b));$("#loopMode").classList.toggle("hidden",m!=="loop");$("#seqMode").classList.toggle("hidden",m!=="seq")});
+/* ---------- Loop Station ---------- */
+const slot = () => L.slots[L.sel];
+const loopDur = () => L.bars * 4 * 60 / L.bpm;
+function snap(t, bpm, q, d) {
+  if (q === 'OFF') return t;
+  const g = 60 / bpm * 4 / parseInt(q.slice(2), 10), r = Math.round(t / g) * g;
+  return r >= d ? 0 : r;
+}
+function loopStartTransport() {
+  stopOtherMode('loop');
+  if (L.playing) return;
+  wake(); L.playing = true; L.start = ctx.currentTime; L.prev = 0; L.beat = -1;
+  L.frame = requestAnimationFrame(loopTick); refresh();
+}
+function loopGlobalStop() {
+  cancelAnimationFrame(L.frame);
+  L.playing = L.rec = L.over = false;
+  $('loopHead').style.left = '0%'; $('loopPos').textContent = '0.00 / ' + loopDur().toFixed(2) + ' s';
+  refresh();
+}
+function fire(a, b) { slot().events.forEach(e => { if (e.time > a && e.time <= b) playSample(e.pad, true); }); }
+function loopTick() {
+  if (!L.playing) return;
+  const d = loopDur(), el_ = ctx.currentTime - L.start;
+  if (L.rec && !L.over && el_ >= d) { L.rec = false; refresh(); }
+  const pos = el_ % d;
+  if (pos >= L.prev) fire(L.prev, pos); else { fire(L.prev, d + 1); fire(-1, pos); }
+  L.prev = pos;
+  const bi = Math.floor(el_ / (60 / L.bpm));
+  if (bi !== L.beat) { L.beat = bi; if (L.metro) click(ctx.currentTime, bi % 4 === 0); }
+  $('loopHead').style.left = (pos / d * 100) + '%';
+  $('loopPos').textContent = pos.toFixed(2) + ' / ' + d.toFixed(2) + ' s';
+  L.frame = requestAnimationFrame(loopTick);
+}
+function loopRecord() {
+  if (mode !== 'loop') return;
+  if (L.rec) { L.rec = L.over = false; refresh(); return; }
+  loopGlobalStop(); slot().events = []; L.rec = true; loopStartTransport();
+}
+function loopOverdub() {
+  if (mode !== 'loop') return;
+  if (!slot().events.length && !L.rec) return loopRecord();
+  if (!L.playing) loopStartTransport();
+  L.over = !L.over; L.rec = L.over; refresh();
+}
+function loopPlayStop() {
+  if (mode !== 'loop') return;
+  if (L.playing) loopGlobalStop(); else if (slot().events.length) loopStartTransport();
+}
+function loopClear(i) { L.slots[i].events = []; if (i === L.sel && L.rec) L.rec = L.over = false; refresh(); }
+function loopClearAll() { L.slots.forEach(s => s.events = []); L.rec = L.over = false; refresh(); }
+function loopSelect(i) {
+  L.sel = i; L.bpm = slot().bpm; L.bars = slot().bars; L.rec = L.over = false; L.prev = 0; refresh();
+}
+function recordEvent(pad) {
+  const d = loopDur(), t = snap((ctx.currentTime - L.start) % d, L.bpm, L.q, d);
+  slot().events.push({ time: t, pad }); drawTl();
+}
+function drawTl() {
+  const tl = $('loopTl'); tl.querySelectorAll('.dot').forEach(d => d.remove());
+  const d = loopDur();
+  slot().events.forEach(e => {
+    const dot = el('div', 'dot'); dot.style.left = (e.time / d * 100) + '%';
+    dot.style.top = ((ROWS.findIndex(r => r[0] === e.pad) + .5) / 9 * 100) + '%'; tl.appendChild(dot);
+  });
+}
 
-$("#loopRecord").onclick=loopRecord;$("#loopPlay").onclick=()=>loop.playing?loopStopAll():loopStart();$("#loopOverdub").onclick=loopOverdub;$("#loopStop").onclick=loopStopAll;$("#loopClear").onclick=()=>clearLoop();$("#loopClearAll").onclick=clearAllLoops;
-$("#loopBpm").oninput=e=>{loop.bpm=Math.max(60,Math.min(180,+e.target.value||120));renderTimeline()};$("#loopBars").onchange=e=>{loop.bars=+e.target.value;renderTimeline()};$("#loopQuant").onchange=e=>loop.quant=+e.target.value;$("#loopMetro").onclick=()=>{loop.metro=!loop.metro;$("#loopMetro").textContent=`METRO ${loop.metro?"ON":"OFF"}`};
-$("#seqBpm").oninput=e=>seq.bpm=Math.max(60,Math.min(200,+e.target.value||150));$("#seqSteps").onchange=e=>{seq.steps=+e.target.value;const p=seq.patterns[seq.selected];ROWS.forEach(r=>p.rows[r]=p.rows[r].slice(0,seq.steps).concat(Array(Math.max(0,seq.steps-p.rows[r].length)).fill(false)));p.steps=seq.steps;renderSeqGrid();renderSeqSlots()};$("#seqSwing").oninput=e=>{$("#seqSwingOut").textContent=e.target.value+"%";seq.swing=+e.target.value};$("#seqQuant").onchange=e=>seq.quant=+e.target.value;$("#seqMetro").onclick=()=>{seq.metro=!seq.metro;$("#seqMetro").textContent=`METRO ${seq.metro?"ON":"OFF"}`};
-$("#seqPlay").onclick=()=>seq.playing?seqStop():seqStart(false);$("#seqPlayAll").onclick=()=>seqStart(true);$("#seqStop").onclick=seqStop;$("#seqClear").onclick=clearSeq;$("#seqFill").onclick=fillHH;$("#seqRandom").onclick=randomize;
+/* ---------- Sequencer ---------- */
+const seqDivision = () => S.q === 'OFF' ? 16 : parseInt(S.q.slice(2), 10);
+const patEmpty = p => !p.some(r => r.slice(0, S.steps).some(Boolean));
+function seqStartTransport(all) {
+  stopOtherMode('seq');
+  if (all) S.arr = true;
+  if (S.playing) return;
+  wake(); S.playing = true; S.next = S.nextBeat = ctx.currentTime + .05; S.beatN = 0; S.queue = [];
+  S.timer = setInterval(seqSched, 25); S.frame = requestAnimationFrame(seqDraw); refresh();
+}
+function seqPause() { clearInterval(S.timer); cancelAnimationFrame(S.frame); S.playing = false; refresh(); }
+function seqStopTransport() {
+  clearInterval(S.timer); cancelAnimationFrame(S.frame);
+  S.playing = false; S.arr = false; S.step = 0; S.queue = []; S.shown = -1;
+  document.querySelectorAll('.cell.cur').forEach(c => c.classList.remove('cur'));
+  refresh();
+}
+function seqPlayPause() { if (mode !== 'seq') return; if (S.playing) seqPause(); else seqStartTransport(false); }
+function seqPlayAll() {
+  if (mode !== 'seq') return;
+  if (!S.playing) { const f = S.pats.findIndex(p => !patEmpty(p)); S.sel = f < 0 ? 0 : f; S.step = 0; renderGrid(); }
+  seqStartTransport(true);
+}
+function nextPattern() {
+  for (let k = 1; k <= 9; k++) { const i = (S.sel + k) % 9; if (!patEmpty(S.pats[i])) { S.sel = i; renderGrid(); refresh(); return; } }
+}
+function seqSched() {
+  const sd = 60 / S.bpm * 4 / seqDivision(), horizon = ctx.currentTime + .12;
+  while (S.next < horizon) {
+    const p = S.pats[S.sel], t = S.next + (S.step % 2 ? S.swing / 100 * sd : 0);
+    ROWS.forEach((r, i) => { if (p[i][S.step] && !S.muted[i]) playSample(r[0], true, t); });
+    S.queue.push({ t, step: S.step });
+    S.next += sd; S.step++;
+    if (S.step >= S.steps) { S.step = 0; if (S.arr) nextPattern(); }
+  }
+  while (S.nextBeat < horizon) { if (S.metro) click(S.nextBeat, S.beatN % 4 === 0); S.nextBeat += 60 / S.bpm; S.beatN++; }
+}
+function seqDraw() {
+  if (!S.playing) return;
+  while (S.queue.length > 1 && S.queue[1].t <= ctx.currentTime) S.queue.shift();
+  const q = S.queue[0];
+  if (q && q.t <= ctx.currentTime && q.step !== S.shown) {
+    S.shown = q.step;
+    document.querySelectorAll('.cell.cur').forEach(c => c.classList.remove('cur'));
+    document.querySelectorAll(`.cell[data-s="${q.step}"]`).forEach(c => c.classList.add('cur'));
+  }
+  S.frame = requestAnimationFrame(seqDraw);
+}
+function seqSelect(i) { S.sel = i; S.step = 0; S.queue = []; renderGrid(); refresh(); }
+function seqClear(i) { S.pats[i].forEach(r => r.fill(false)); if (i === S.sel) renderGrid(); }
+function renderGrid() {
+  const g = $('grid'); g.style.setProperty('--n', S.steps); g.innerHTML = ''; S.shown = -1;
+  const p = S.pats[S.sel];
+  ROWS.forEach((r, i) => {
+    const m = el('button', 'mute' + (S.muted[i] ? ' on' : ''), r[1]);
+    m.title = 'Mute row'; m.onclick = () => { S.muted[i] = !S.muted[i]; m.classList.toggle('on'); };
+    g.appendChild(m);
+    for (let s = 0; s < S.steps; s++) {
+      const c = el('button', 'cell' + (p[i][s] ? ' on' : '') + (s % 4 === 0 ? ' b' : ''));
+      c.dataset.s = s;
+      c.onclick = () => { p[i][s] = !p[i][s]; c.classList.toggle('on'); if (p[i][s]) playSample(r[0]); };
+      g.appendChild(c);
+    }
+  });
+}
 
-function renderMappings(){const pd=Object.entries(padMap).map(([k,p])=>`<div class="mapping-item"><span>${NAMES[p]||p}</span><button type="button" class="map-key" data-type="pad" data-name="${p}">${k.toUpperCase()}</button></div>`).join("");$("#padMappings").innerHTML=pd;const names={record:"Record","playStop":"Play / Stop",overdub:"Overdub",stop:"Stop",clear:"Clear Selected",metronome:"Metronome"};$("#controlMappings").innerHTML=Object.entries(ctrlMap).map(([k,c])=>`<div class="mapping-item"><span>${names[c]}</span><button type="button" class="map-key" data-type="ctrl" data-name="${c}">${k===" "?"SPACE":k.toUpperCase()}</button></div>`).join("");$$(".map-key").forEach(b=>b.onclick=()=>captureMapping(b))}
-function captureMapping(btn){btn.classList.add("capture");const fn=e=>{e.preventDefault();const key=normalizeKey(e);const target=btn.dataset.name;if(btn.dataset.type==="pad"){Object.keys(padMap).forEach(k=>{if(padMap[k]===target)delete padMap[k]});padMap[key]=target;localStorage.setItem("drumLoopPadMapping",JSON.stringify(padMap))}else{Object.keys(ctrlMap).forEach(k=>{if(ctrlMap[k]===target)delete ctrlMap[k]});ctrlMap[key]=target;localStorage.setItem("drumLoopControlMapping",JSON.stringify(ctrlMap))}btn.classList.remove("capture");document.removeEventListener("keydown",fn,true);renderPads();renderMappings()};document.addEventListener("keydown",fn,true)}
-$("#mappingBtn").onclick=()=>{$("#mappingDialog").showModal();renderMappings()};$("#restoreMappings").onclick=()=>{padMap={...DEFAULT_PAD};ctrlMap={...DEFAULT_CTRL};localStorage.setItem("drumLoopPadMapping",JSON.stringify(padMap));localStorage.setItem("drumLoopControlMapping",JSON.stringify(ctrlMap));renderPads();renderMappings()};$("#clearMappings").onclick=()=>{padMap={};ctrlMap={};localStorage.setItem("drumLoopPadMapping","{}");localStorage.setItem("drumLoopControlMapping","{}");renderPads();renderMappings()};
+/* ---------- UI refresh ---------- */
+function refresh() {
+  $('loopSlots').querySelectorAll('button').forEach((b, i) => {
+    b.className = (i === L.sel ? 'sel ' : '') + (L.slots[i].events.length ? 'full ' : '') + (L.playing && i === L.sel ? 'play' : '');
+  });
+  $('seqSlots').querySelectorAll('button').forEach((b, i) => {
+    b.className = (i === S.sel ? 'sel ' : '') + (!patEmpty(S.pats[i]) ? 'full ' : '') + (S.playing && i === S.sel ? 'play' : '');
+  });
+  $('lBpm').value = L.bpm; $('lBars').value = L.bars; $('lQ').value = L.q;
+  $('lRec').classList.toggle('on', L.rec && !L.over); $('lOver').classList.toggle('on', L.over);
+  $('lPlay').classList.toggle('on', L.playing && !L.rec); $('lMet').classList.toggle('on', L.metro);
+  $('loopHead').classList.toggle('rec', L.rec);
+  $('sBpm').value = S.bpm; $('sSteps').value = S.steps; $('sSwing').value = S.swing; $('sQ').value = S.q;
+  $('sPlay').classList.toggle('on', S.playing); $('sMet').classList.toggle('on', S.metro);
+  drawTl(); refreshPads();
+}
+function refreshPads() {
+  document.querySelectorAll('.pad').forEach((b, i) => {
+    const ks = Object.keys(padMap).filter(k => padMap[k] === i).map(k => k === ' ' ? 'Space' : k.toUpperCase());
+    b.querySelector('small').textContent = ks.join(' ') || '—';
+  });
+}
+function setMode(m) {
+  if (m === mode) return;
+  stopOtherMode(m); mode = m;
+  $('loopPanel').hidden = m !== 'loop'; $('seqPanel').hidden = m !== 'seq';
+  $('tabLoop').classList.toggle('on', m === 'loop'); $('tabSeq').classList.toggle('on', m === 'seq');
+  if (m === 'seq') renderGrid();
+  refresh();
+}
 
-renderPads();renderLoopSlots();renderTimeline();renderSeqSlots();renderSeqGrid();loadSamples();
+/* ---------- Pads ---------- */
+function hitPad(i) {
+  wake();
+  const name = ROWS[PADS[i]][0], b = $('pads').children[i];
+  b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 100);
+  if (playSample(name) && mode === 'loop' && L.rec && L.playing) recordEvent(name);
+}
+
+/* ---------- Controls ---------- */
+function runControl(c) {
+  const loop = { record: loopRecord, playstop: loopPlayStop, overdub: loopOverdub, stop: loopGlobalStop, clearSel: () => loopClear(L.sel), clearAll: loopClearAll, metro: () => { L.metro = !L.metro; refresh(); } };
+  const seq = { playstop: seqPlayPause, stop: seqStopTransport, clearSel: () => seqClear(S.sel), clearAll: () => S.pats.forEach((_, i) => seqClear(i)), metro: () => { S.metro = !S.metro; refresh(); } };
+  const f = (mode === 'loop' ? loop : seq)[c]; if (f) f();
+}
+
+/* ---------- Keyboard ---------- */
+const held = new Set(); let capture = null;
+const normKey = e => e.key.length === 1 ? e.key.toLowerCase() : e.key;
+addEventListener('blur', () => held.clear());
+addEventListener('keyup', e => held.delete(e.code));
+addEventListener('keydown', e => {
+  if (e.target.matches('input,select,textarea')) return;
+  if (e.repeat) { if (capture || padMap[normKey(e)] !== undefined || ctlMap[normKey(e)]) e.preventDefault(); return; }
+  const k = normKey(e);
+  if (capture) { // 1. mapping capture
+    e.preventDefault();
+    if (/^[1-9]$/.test(k) || e.code.startsWith('Digit')) return;
+    delete padMap[k]; delete ctlMap[k];
+    capture.map[k] = capture.id; capture = null; saveMaps(); renderMap(); return;
+  }
+  if (!$('modal').hidden) return;
+  if (held.has(e.code)) return;
+  held.add(e.code);
+  if (/^Digit[1-9]$/.test(e.code)) { // 2. number keys
+    e.preventDefault(); const i = +e.code[5] - 1;
+    if (mode === 'loop') { if (e.shiftKey) loopClear(i); else loopSelect(i); }
+    else if (e.shiftKey) seqClear(i);
+    else { seqSelect(i); seqStartTransport(false); }
+    return;
+  }
+  if (ctlMap[k]) { e.preventDefault(); runControl(ctlMap[k]); return; } // 3. controls
+  if (padMap[k] !== undefined) { e.preventDefault(); hitPad(padMap[k]); } // 4. pads
+});
+
+/* ---------- Mapping modal ---------- */
+function renderMap() {
+  const b = $('mapBody'); b.innerHTML = '';
+  const sec = (title, items, map) => {
+    b.appendChild(el('h3', '', title));
+    items.forEach(([id, label]) => {
+      const r = el('div', 'mrow'); r.appendChild(el('span', '', label));
+      Object.keys(map).filter(k => map[k] === id).forEach(k => {
+        const c = el('button', 'chip', (k === ' ' ? 'Space' : k) + ' ×'); c.title = 'Remove this mapping';
+        c.onclick = () => { delete map[k]; saveMaps(); renderMap(); }; r.appendChild(c);
+      });
+      const a = el('button', '', capture && capture.id === id && capture.map === map ? 'Press a key…' : 'Map key');
+      a.onclick = () => { capture = { id, map }; renderMap(); }; r.appendChild(a); b.appendChild(r);
+    });
+  };
+  sec('PAD MAPPINGS', PADS.map((r, i) => [i, `Pad ${i + 1}: ${ROWS[r][1]}`]), padMap);
+  sec('LOOP CONTROL MAPPINGS', CTLS, ctlMap);
+  refreshPads();
+}
+const clearObj = o => Object.keys(o).forEach(k => delete o[k]);
+$('mapBtn').onclick = () => { capture = null; renderMap(); $('modal').hidden = false; };
+$('mapClose').onclick = () => { capture = null; $('modal').hidden = true; };
+$('mapNone').onclick = () => { clearObj(padMap); clearObj(ctlMap); saveMaps(); renderMap(); };
+$('mapDef').onclick = () => { clearObj(padMap); clearObj(ctlMap); Object.assign(padMap, DEF_PAD); Object.assign(ctlMap, DEF_CTL); saveMaps(); renderMap(); };
+
+/* ---------- Build UI & wire events ---------- */
+const fill = (id, opts) => opts.forEach(o => { const x = el('option', '', o); x.value = o; $(id).appendChild(x); });
+fill('lBars', [1, 2, 4, 8]); fill('lQ', QS); fill('sSteps', [16, 32]); fill('sQ', QS);
+for (let i = 0; i < 9; i++) {
+  const lb = el('button', '', i + 1); lb.onclick = () => loopSelect(i); $('loopSlots').appendChild(lb);
+  const sb = el('button', '', i + 1); sb.onclick = () => { seqSelect(i); }; $('seqSlots').appendChild(sb);
+}
+PADS.forEach((r, i) => {
+  const p = el('button', 'pad'); p.appendChild(el('span', '', ROWS[r][1])); p.appendChild(el('small', ''));
+  p.onpointerdown = e => { e.preventDefault(); hitPad(i); }; $('pads').appendChild(p);
+});
+$('tabLoop').onclick = () => setMode('loop'); $('tabSeq').onclick = () => setMode('seq');
+
+$('lRec').onclick = loopRecord; $('lPlay').onclick = loopPlayStop; $('lOver').onclick = loopOverdub; $('lStop').onclick = loopGlobalStop;
+$('lClr').onclick = () => loopClear(L.sel); $('lClrAll').onclick = loopClearAll;
+$('lMet').onclick = () => { L.metro = !L.metro; refresh(); };
+$('lBpm').onchange = e => {
+  const v = clamp(e.target.value, 60, 180), old = slot().bpm;
+  slot().events.forEach(ev => ev.time *= old / v);
+  slot().bpm = L.bpm = v; L.start = ctx.currentTime; L.prev = 0; refresh();
+};
+$('lBars').onchange = e => { slot().bars = L.bars = +e.target.value; slot().events = slot().events.filter(ev => ev.time < loopDur()); L.start = ctx.currentTime; L.prev = 0; refresh(); };
+$('lQ').onchange = e => { L.q = e.target.value; };
+
+$('sPlay').onclick = seqPlayPause; $('sPlayAll').onclick = seqPlayAll; $('sStopAll').onclick = seqStopTransport;
+$('sMet').onclick = () => { S.metro = !S.metro; refresh(); };
+$('sBpm').onchange = e => { S.bpm = clamp(e.target.value, 60, 200); refresh(); };
+$('sSteps').onchange = e => { S.steps = +e.target.value; if (S.step >= S.steps) S.step = 0; renderGrid(); refresh(); };
+$('sSwing').oninput = e => { S.swing = +e.target.value; };
+$('sQ').onchange = e => { S.q = e.target.value; };
+$('sClr').onclick = () => seqClear(S.sel);
+$('sFill').onclick = () => { for (let s = 0; s < 32; s++) S.pats[S.sel][2][s] = s % 2 === 0; renderGrid(); refresh(); };
+$('sRand').onclick = () => { S.pats[S.sel].forEach((r, i) => { for (let s = 0; s < 32; s++) r[s] = Math.random() < (i < 3 ? .2 : .08); }); renderGrid(); refresh(); };
+
+refresh();
+loadAll();

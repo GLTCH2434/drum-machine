@@ -1,102 +1,71 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Drum Loop Station</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drum Loop Station</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main class="app">
-    <header class="topbar">
-      <div>
-        <div class="eyebrow">BROWSER DRUM WORKSTATION</div>
-        <h1>DRUM LOOP STATION</h1>
-      </div>
-      <div id="sampleStatus" class="status">Loading samples…</div>
-      <button id="mappingBtn" class="secondary">KEY MAP</button>
-    </header>
+<header>
+  <h1>Drum Loop Station</h1>
+  <button id="mapBtn">Key mapping</button>
+</header>
+<nav>
+  <button id="tabLoop" class="tab on">Loop Station</button>
+  <button id="tabSeq" class="tab">Sequencer</button>
+</nav>
 
-    <nav class="mode-tabs" aria-label="Instrument mode">
-      <button class="mode-tab active" data-mode="loop">LOOP STATION</button>
-      <button class="mode-tab" data-mode="seq">SEQUENCER</button>
-    </nav>
+<section id="loopPanel" class="panel">
+  <div id="loopSlots" class="slots"></div>
+  <div id="loopTl" class="tl"><div id="loopHead" class="head"></div></div>
+  <div id="loopPos" class="pos">0.00 / 0.00 s</div>
+  <div class="ctl">
+    <button id="lRec">Record</button>
+    <button id="lPlay">Play / Stop</button>
+    <button id="lOver">Overdub</button>
+    <button id="lStop">Stop</button>
+    <button id="lClr">Clear selected</button>
+    <button id="lClrAll">Clear all</button>
+    <button id="lMet">Metronome</button>
+    <label>BPM <input id="lBpm" type="number" min="60" max="180"></label>
+    <label>Bars <select id="lBars"></select></label>
+    <label>Quantize <select id="lQ"></select></label>
+  </div>
+</section>
 
-    <section class="pads-panel">
-      <div class="section-title">DRUM PADS <span>LIVE INPUT</span></div>
-      <div id="pads" class="pads"></div>
-    </section>
+<section id="seqPanel" class="panel" hidden>
+  <div id="seqSlots" class="slots"></div>
+  <div class="ctl">
+    <button id="sPlay">Play / Pause</button>
+    <button id="sPlayAll">Play all</button>
+    <button id="sStopAll">Stop all</button>
+    <button id="sMet">Metronome</button>
+    <label>BPM <input id="sBpm" type="number" min="60" max="200"></label>
+    <label>Steps <select id="sSteps"></select></label>
+    <label>Swing <input id="sSwing" type="range" min="0" max="60"></label>
+    <label>Quantize <select id="sQ"></select></label>
+  </div>
+  <div class="ctl">
+    <button id="sClr">Clear</button>
+    <button id="sFill">Fill hi-hat</button>
+    <button id="sRand">Randomize</button>
+  </div>
+  <div id="grid" class="grid"></div>
+</section>
 
-    <section id="loopMode" class="mode-panel">
-      <div class="panel-head">
-        <div>
-          <div class="section-title">LOOP STATION <span>9 SLOTS</span></div>
-          <div id="loopTransportState" class="transport-state">STOPPED</div>
-        </div>
-        <div class="control-group">
-          <label>BPM <input id="loopBpm" type="number" min="60" max="180" value="120"></label>
-          <label>BARS <select id="loopBars"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></label>
-          <label>QUANT <select id="loopQuant"><option value="0">OFF</option><option value="4">1/4</option><option value="8">1/8</option><option value="16" selected>1/16</option><option value="32">1/32</option></select></label>
-          <button id="loopMetro" class="toggle">METRO OFF</button>
-        </div>
-      </div>
+<section class="panel"><div id="pads" class="pads"></div></section>
 
-      <div id="loopSlots" class="slots"></div>
-
-      <div class="transport">
-        <button id="loopRecord" class="danger">● RECORD</button>
-        <button id="loopPlay">▶ PLAY / STOP</button>
-        <button id="loopOverdub">⊕ OVERDUB</button>
-        <button id="loopStop" class="secondary">■ STOP</button>
-        <button id="loopClear" class="secondary">CLEAR SELECTED</button>
-        <button id="loopClearAll" class="secondary">CLEAR ALL</button>
-      </div>
-
-      <div class="timeline-card">
-        <div class="timeline-meta"><span id="loopPosition">0.00 / 8.00 s</span><span id="loopModeState">READY</span></div>
-        <div id="loopTimeline" class="timeline"><div id="loopEvents" class="timeline-events"></div><div id="loopPlayhead" class="playhead"></div></div>
-      </div>
-    </section>
-
-    <section id="seqMode" class="mode-panel hidden">
-      <div class="panel-head">
-        <div>
-          <div class="section-title">SEQUENCER <span>9 PATTERNS</span></div>
-          <div id="seqTransportState" class="transport-state">STOPPED</div>
-        </div>
-        <div class="control-group">
-          <label>BPM <input id="seqBpm" type="number" min="60" max="200" value="150"></label>
-          <label>STEPS <select id="seqSteps"><option value="16" selected>16</option><option value="32">32</option></select></label>
-          <label>SWING <input id="seqSwing" type="range" min="0" max="50" value="0"><output id="seqSwingOut">0%</output></label>
-          <label>QUANT <select id="seqQuant"><option value="0">OFF</option><option value="4">1/4</option><option value="8">1/8</option><option value="16" selected>1/16</option><option value="32">1/32</option></select></label>
-          <button id="seqMetro" class="toggle">METRO OFF</button>
-        </div>
-      </div>
-
-      <div id="seqSlots" class="slots"></div>
-      <div class="transport">
-        <button id="seqPlay">▶ PLAY / PAUSE</button>
-        <button id="seqPlayAll">▶ PLAY ALL</button>
-        <button id="seqStop" class="secondary">■ STOP ALL</button>
-        <button id="seqClear" class="secondary">CLEAR</button>
-        <button id="seqFill" class="secondary">FILL HI-HAT</button>
-        <button id="seqRandom" class="secondary">RANDOMIZE</button>
-      </div>
-      <div id="seqGrid" class="seq-grid"></div>
-    </section>
-  </main>
-
-  <dialog id="mappingDialog">
-    <form method="dialog" class="mapping-dialog">
-      <div class="panel-head"><div><div class="section-title">KEY MAPPING</div><p class="muted">Click a field, then press a key.</p></div><button value="cancel" class="secondary">CLOSE</button></div>
-      <div class="mapping-columns">
-        <div><h3>PAD MAPPINGS</h3><div id="padMappings"></div></div>
-        <div><h3>LOOP CONTROL MAPPINGS</h3><div id="controlMappings"></div></div>
-      </div>
-      <div class="transport"><button id="restoreMappings" type="button" class="secondary">RESTORE DEFAULTS</button><button id="clearMappings" type="button" class="secondary">REMOVE ALL</button></div>
-    </form>
-  </dialog>
-
-  <script src="app.js"></script>
+<div id="modal" class="modal" hidden>
+  <div class="dlg">
+    <div id="mapBody"></div>
+    <div class="ctl">
+      <button id="mapNone">Remove all</button>
+      <button id="mapDef">Restore defaults</button>
+      <button id="mapClose">Close</button>
+    </div>
+  </div>
+</div>
+<script src="app.js"></script>
 </body>
 </html>
