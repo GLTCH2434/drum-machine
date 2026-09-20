@@ -42,23 +42,49 @@
 
 <section id="pads" class="pads" aria-label="Drum pads"></section>
 
-<section class="mapping-panel">
-  <div class="section-title">KEY MAPPING <span>Click a key, then press a keyboard key</span></div>
-  <div id="mapping" class="mapping"></div>
-  <div class="mapping-actions">
-    <button id="resetMapping">RESET DEFAULTS</button>
-  </div>
+<section class="controls">
+  <button id="record" class="danger"><span class="key-badge" data-control="record"></span> ● RECORD</button>
+  <button id="play"><span class="key-badge" data-control="play"></span> ▶ PLAY</button>
+  <button id="overdub"><span class="key-badge" data-control="overdub"></span> ↻ OVERDUB</button>
+  <button id="stop"><span class="key-badge" data-control="stop"></span> ■ STOP</button>
+  <button id="clear"><span class="key-badge" data-control="clear"></span> CLEAR SLOT</button>
+  <button id="clearAll"><span class="key-badge" data-control="clearAll"></span> CLEAR ALL</button>
+  <button id="metronome"><span class="key-badge" data-control="metronome"></span> METRONOME: OFF</button>
+  <button id="openMapping">KEY MAPPING</button>
 </section>
 
-<section class="controls">
-  <button id="record" class="danger">● RECORD</button>
-  <button id="play">▶ PLAY</button>
-  <button id="overdub">↻ OVERDUB</button>
-  <button id="stop">■ STOP</button>
-  <button id="clear">CLEAR SLOT</button>
-  <button id="clearAll">CLEAR ALL</button>
-  <button id="metronome">METRONOME: OFF</button>
-</section>
+<div id="mappingOverlay" class="mapping-overlay" aria-hidden="true">
+  <div class="mapping-window" role="dialog" aria-modal="true">
+    <div class="mapping-window-head">
+      <div>
+        <p class="eyebrow">CUSTOM INPUT</p>
+        <h2>Key Mapping</h2>
+      </div>
+      <button id="closeMapping" class="close-button" type="button">×</button>
+    </div>
+
+    <p class="mapping-help">
+      Click MAP, then press the key you want. REMOVE unassigns it.
+      Pad and control mappings cannot use the same key.
+    </p>
+
+    <div class="mapping-section">
+      <h3>DRUM PADS</h3>
+      <div id="mappingPads" class="mapping"></div>
+    </div>
+
+    <div class="mapping-section">
+      <h3>CONTROLS</h3>
+      <div id="mappingControls" class="mapping"></div>
+    </div>
+
+    <div class="mapping-actions">
+      <button id="clearAllMappings" class="danger" type="button">REMOVE ALL MAPPINGS</button>
+      <button id="resetMapping" type="button">RESTORE DEFAULTS</button>
+      <button id="closeMappingBottom" class="primary" type="button">DONE</button>
+    </div>
+  </div>
+</div>
 
 <section class="settings">
   <label>BPM <input id="bpm" type="range" min="60" max="180" value="120"><output id="bpmOut">120</output></label>
