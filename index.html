@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drum Loop Station</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="app">
+<header>
+  <div>
+    <p class="eyebrow">KEYBOARD PERFORMANCE LOOPER</p>
+    <h1>Drum Loop Station</h1>
+  </div>
+  <button id="audioStart" class="primary">START AUDIO</button>
+</header>
+
+<section class="slots-panel">
+  <div class="section-title">LOOP SLOTS <span id="slotHint">1–9 select</span></div>
+  <div id="slots" class="slots"></div>
+</section>
+
+<section class="transport">
+  <div class="stat"><span>SELECTED SLOT</span><strong id="slotValue">1</strong></div>
+  <div class="stat"><span>BPM</span><strong id="bpmValue">120</strong></div>
+  <div class="stat"><span>BARS</span><strong id="barsValue">4</strong></div>
+  <div class="stat"><span>STATUS</span><strong id="status">READY</strong></div>
+</section>
+
+<section class="timeline-panel">
+  <div class="timeline-head">
+    <span>LOOP TIMELINE — SLOT <b id="timelineSlot">1</b></span>
+    <span id="position">0.00 / 8.00 s</span>
+  </div>
+  <div id="timeline" class="timeline">
+    <div class="grid"></div>
+    <div id="events" class="events"></div>
+    <div id="playhead" class="playhead"></div>
+  </div>
+</section>
+
+<section id="pads" class="pads" aria-label="Drum pads"></section>
+
+<section class="mapping-panel">
+  <div class="section-title">KEY MAPPING <span>Click a key, then press a keyboard key</span></div>
+  <div id="mapping" class="mapping"></div>
+  <div class="mapping-actions">
+    <button id="resetMapping">RESET DEFAULTS</button>
+  </div>
+</section>
+
+<section class="controls">
+  <button id="record" class="danger">● RECORD</button>
+  <button id="play">▶ PLAY</button>
+  <button id="overdub">↻ OVERDUB</button>
+  <button id="stop">■ STOP</button>
+  <button id="clear">CLEAR SLOT</button>
+  <button id="clearAll">CLEAR ALL</button>
+  <button id="metronome">METRONOME: OFF</button>
+</section>
+
+<section class="settings">
+  <label>BPM <input id="bpm" type="range" min="60" max="180" value="120"><output id="bpmOut">120</output></label>
+  <label>Bars
+    <select id="bars"><option>1</option><option>2</option><option selected>4</option><option>8</option></select>
+  </label>
+  <label>Quantize
+    <select id="quantize">
+      <option value="0">OFF</option><option value="4">1/4</option>
+      <option value="8">1/8</option><option value="16" selected>1/16</option><option value="32">1/32</option>
+    </select>
+  </label>
+</section>
+
+<p class="hint">
+  Pads: A S D F G H J K L Z X C · 1–9 select loop · R record · Space play/stop · T overdub · Backspace clear selected · Shift+1–9 clear slot
+</p>
+<p id="sampleStatus" class="sample-status">Loading samples…</p>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
