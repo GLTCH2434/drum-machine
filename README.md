@@ -105,3 +105,12 @@ Loop slots 1–9 remain fixed:
 - Sequencer playback is driven by the master transport and fires each 1/16 step once.
 - Added a moving step highlight in the sequencer.
 - The Loop Station playhead now moves continuously during recording, even before the first hit.
+
+
+### V11 — Fully Independent Workstations
+- Loop Station and Sequencer now have completely separate transports, clocks, BPM, playheads, metronomes and playback state.
+- Loop slots 1–9 are independent from sequencer patterns 1–9.
+- In Loop Station mode, 1–9 select loops and Shift+1–9 clear them.
+- In Sequencer mode, 1–9 select/play patterns and Shift+1–9 clear them.
+- Sequencer controls: 16/32 steps, BPM 60–200, swing control, play, stop, metronome, clear, fill hi-hat, randomize, and per-row mute.
+- Loop controls: BPM, bars, quantization, record, play selected, overdub, global stop, clear selected, clear all, metronome, and moving recording/playback cue.
