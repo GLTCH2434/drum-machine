@@ -74,3 +74,15 @@ Loop slots 1–9 remain fixed:
 - Fixed the playback scheduler so an event is fired exactly once when its timestamp is crossed. The previous frame-window logic could fire the same event on multiple animation frames and cause audible double hits.
 - Increased live duplicate protection to 80 ms and added a recording-level duplicate-event guard.
 - Active slots receive a visual `playing` state.
+
+
+### V7 — Master Transport Architecture
+- All slots share one master musical clock.
+- BPM and master bar length define the transport timeline.
+- Multiple slots can play simultaneously against the same timeline.
+- Individual slots may contain 1/2/4/8 bars and repeat within the master cycle.
+- Recording stores timestamped drum events against the master clock.
+- Overdub adds events to an existing synchronized loop.
+- Quantization snaps recorded hits to the selected beat grid.
+- Playback uses an event cursor instead of a frame-time window, preventing repeated playback of the same event.
+- Global STOP stops the entire transport; PLAY toggles the selected slot.

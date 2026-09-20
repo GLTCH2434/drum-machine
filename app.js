@@ -64,7 +64,7 @@ let master = null;
 const audioBuffers = {};
 
 let slots = Array.from({length:9}, () => ({
-  events: [], bpm:120, bars:4, _previousElapsed: null
+  events: [], bpm:120, bars:4
 }));
 
 let selectedSlot = 0;
@@ -231,28 +231,23 @@ function triggerPad(key, fromPlayback = false) {
   flashPad(key);
 
   if (!fromPlayback && (recording || overdubbing)) {
-    let time = performance.now() / 1000 - loopStart;
-    time = Math.max(0, Math.min(loopLength(), quantizeTime(time)));
-    if (time >= loopLength()) time = 0;
-
+    const padEventTime = quantizeTime(recordedHitTime());
     const events = currentLoop().events;
     const last = events[events.length - 1];
 
-    // Never store two nearly simultaneous copies of the same physical hit.
-    // This is intentionally separate from audio playback so legitimate
-    // repeated notes remain possible after the guard interval.
-    if (last && last.key === key && Math.abs(last.time - time) < 0.08) {
+    // Ignore an identical event arriving essentially at the same timestamp.
+    if (last && last.key === key && Math.abs(last.time - padEventTime) < 0.08) {
       return;
     }
 
     events.push({
-      time,
+      time: padEventTime,
       sound: pad[2],
       key
     });
 
+    events.sort((a, b) => a.time - b.time);
     renderEvents();
-    renderSlots();
   }
 }
 
@@ -343,75 +338,199 @@ function selectSlot(index) {
   setStatus(loop.events.length ? "READY" : "EMPTY");
 }
 
-// ---------------- PLAYBACK ----------------
+// ---------------- MASTER TRANSPORT / PLAYBACK ----------------
+
+// V7 uses one musical clock for all slots. Slots do not have independent
+// wall-clock loops; they all resolve their events against this timeline.
+// A slot may contain 1, 2, 4 or 8 bars, but all slots share the same BPM.
+
+const MASTER_BPM_MIN = 60;
+const MASTER_BPM_MAX = 180;
+
+let transportRunning = false;
+let masterStartTime = 0;
+let masterLastPosition = 0;
+let masterAnimationId = null;
+let masterNextEvent = new Map();
+
+function secondsPerBeat() {
+  return 60 / Number(bpmEl.value);
+}
+
+function masterBarLength() {
+  return secondsPerBeat() * 4;
+}
+
+function masterCycleLength() {
+  // The transport cycle is the configured bar count. Individual slots may
+  // be shorter and wrap inside this master cycle.
+  return masterBarLength() * Number(barsEl.value);
+}
 
 function slotLength(slot) {
-  return (60 / slot.bpm) * 4 * slot.bars;
+  const bars = Number(slot.bars) || 1;
+  return secondsPerBeat() * 4 * bars;
+}
+
+function currentMasterPosition(now = performance.now() / 1000) {
+  if (!transportRunning) return masterLastPosition;
+  const cycle = masterCycleLength();
+  if (cycle <= 0) return 0;
+  return ((now - masterStartTime) % cycle + cycle) % cycle;
+}
+
+function resetSlotSchedulers() {
+  masterNextEvent.clear();
+  for (let i = 0; i < slots.length; i++) {
+    masterNextEvent.set(i, 0);
+  }
+}
+
+function slotPosition(slot, masterPosition) {
+  const length = slotLength(slot);
+  if (!length) return 0;
+  return masterPosition % length;
+}
+
+function playSlotEventsAtPosition(index, previousMaster, currentMaster, wrapped) {
+  const slot = slots[index];
+  if (!slot || !slot.events.length || !playingSlots.has(index)) return;
+
+  const length = slotLength(slot);
+  let next = masterNextEvent.get(index) ?? 0;
+
+  // Keep the event cursor aligned with the current slot position after a
+  // loop/transport start.
+  const currentSlotPos = currentMaster % length;
+  const previousSlotPos = previousMaster % length;
+
+  // Events are stored in seconds within the slot loop.
+  // Advance only when the event timestamp has actually been crossed.
+  // This prevents animation-frame overlap from firing one event twice.
+  let guard = 0;
+  while (next < slot.events.length && guard++ < slot.events.length + 1) {
+    const event = slot.events[next];
+    const t = Number(event.time) || 0;
+
+    let crossed;
+    if (wrapped || currentSlotPos < previousSlotPos) {
+      crossed = t > previousSlotPos || t <= currentSlotPos;
+    } else {
+      crossed = t > previousSlotPos && t <= currentSlotPos;
+    }
+
+    if (!crossed) break;
+
+    triggerPad(event.key, true);
+    next++;
+
+    if (next >= slot.events.length) {
+      next = 0;
+      // If this is a normal cycle wrap, the next event is handled on the
+      // following crossing rather than being fired twice now.
+      break;
+    }
+  }
+
+  masterNextEvent.set(index, next);
+}
+
+function startTransport() {
+  ensureAudio();
+
+  if (transportRunning) return;
+
+  const cycle = masterCycleLength();
+  const now = performance.now() / 1000;
+
+  // Resume from the current musical position when possible.
+  masterStartTime = now - masterLastPosition;
+
+  transportRunning = true;
+  resetSlotSchedulers();
+
+  // Align event cursors with the current position so starting playback does
+  // not unexpectedly fire every event in a loop.
+  const position = masterLastPosition;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    if (!slot.events.length || !playingSlots.has(i)) continue;
+
+    const p = position % slotLength(slot);
+    let cursor = slot.events.findIndex(e => Number(e.time) > p);
+    if (cursor < 0) cursor = 0;
+    masterNextEvent.set(i, cursor);
+  }
+
+  updateTransportStatus();
+  if (!masterAnimationId) masterAnimationId = requestAnimationFrame(masterTick);
 }
 
 function startSlotPlayback(index) {
   const slot = slots[index];
-  if (!slot || !slot.events.length || playingSlots.has(index)) return;
+  if (!slot || !slot.events.length) return;
 
   ensureAudio();
-
   playingSlots.add(index);
-  slotPlaybackStart.set(index, performance.now() / 1000);
+
+  // When joining an already-running master clock, begin at the next musical
+  // boundary for clean synchronization rather than starting a private clock.
+  if (!transportRunning) {
+    masterLastPosition = 0;
+    startTransport();
+  }
+
+  // Align this slot to the current master position.
+  const p = currentMasterPosition();
+  const len = slotLength(slot);
+  let cursor = slot.events.findIndex(e => Number(e.time) > (p % len));
+  if (cursor < 0) cursor = 0;
+  masterNextEvent.set(index, cursor);
+
   renderSlots();
   updateTransportStatus();
 }
 
 function stopSlotPlayback(index) {
   playingSlots.delete(index);
-  slotPlaybackStart.delete(index);
+  masterNextEvent.delete(index);
+
   renderSlots();
+  updateTransportStatus();
+
+  if (!playingSlots.size && transportRunning) {
+    stopTransport();
+  }
+}
+
+function stopTransport() {
+  transportRunning = false;
+  masterLastPosition = 0;
+  masterStartTime = 0;
+  masterNextEvent.clear();
+
+  if (masterAnimationId) {
+    cancelAnimationFrame(masterAnimationId);
+    masterAnimationId = null;
+  }
+
+  resetPosition();
   updateTransportStatus();
 }
 
 function startPlayback() {
-  ensureAudio();
-
-  // PLAY starts the selected slot without stopping any other active slot.
   startSlotPlayback(selectedSlot);
-
-  if (!animationId) {
-    previousElapsed = null;
-    lastBeat = -1;
-    animationId = requestAnimationFrame(tick);
-  }
 }
 
 function stopPlayback() {
-  // STOP is a global transport stop.
+  // Global STOP.
   playingSlots.clear();
-  slotPlaybackStart.clear();
+  stopTransport();
 
   recording = false;
   overdubbing = false;
   $("record").classList.remove("recording");
-
-  previousElapsed = null;
-  lastBeat = -1;
-
-  if (animationId) {
-    cancelAnimationFrame(animationId);
-    animationId = null;
-  }
-
-  resetPosition();
-  renderSlots();
   setStatus("READY");
-}
-
-function stopSelectedSlot() {
-  stopSlotPlayback(selectedSlot);
-
-  if (!playingSlots.size && animationId) {
-    cancelAnimationFrame(animationId);
-    animationId = null;
-    previousElapsed = null;
-    resetPosition();
-  }
 }
 
 function updateTransportStatus() {
@@ -426,125 +545,140 @@ function updateTransportStatus() {
   }
 }
 
-function fireCrossedEvents(slot, previous, elapsed, wrapped) {
-  if (!slot.events.length) return;
-
-  for (const event of slot.events) {
-    let crossed = false;
-
-    if (previous === null) {
-      // On the first frame, only fire events at the loop start.
-      crossed = event.time <= 0.02;
-    } else if (!wrapped) {
-      // Normal forward movement: each event is crossed exactly once.
-      crossed = event.time > previous && event.time <= elapsed;
-    } else {
-      // Loop wrapped: cross the tail of the loop, then its beginning.
-      crossed =
-        event.time > previous ||
-        event.time <= elapsed;
-    }
-
-    if (crossed) {
-      triggerPad(event.key, true);
-    }
-  }
-}
-
-function tick() {
-  if (!playingSlots.size) {
-    animationId = null;
-    previousElapsed = null;
+function masterTick() {
+  if (!transportRunning) {
+    masterAnimationId = null;
     return;
   }
 
   const now = performance.now() / 1000;
+  const cycle = masterCycleLength();
+  const elapsedAbsolute = now - masterStartTime;
+  const current = ((elapsedAbsolute % cycle) + cycle) % cycle;
+  const previous = masterLastPosition;
 
-  // Render/play the selected slot's timeline position.
-  const selectedStart = slotPlaybackStart.get(selectedSlot);
+  const wrapped = current < previous;
+
+  // Render selected slot position.
   const selected = slots[selectedSlot];
-
-  if (selectedStart && selected && selected.events.length) {
-    const selectedLength = slotLength(selected);
-    const selectedElapsed = (now - selectedStart) % selectedLength;
-
-    playheadEl.style.left = `${(selectedElapsed / selectedLength) * 100}%`;
-    positionEl.textContent =
-      `${selectedElapsed.toFixed(2)} / ${selectedLength.toFixed(2)} s`;
+  if (selected && selected.events.length) {
+    const len = slotLength(selected);
+    const pos = current % len;
+    playheadEl.style.left = `${(pos / len) * 100}%`;
+    positionEl.textContent = `${pos.toFixed(2)} / ${len.toFixed(2)} s`;
   }
 
-  // Every active slot has its own independent loop clock.
-  for (const index of Array.from(playingSlots)) {
-    const slot = slots[index];
-    const startTime = slotPlaybackStart.get(index);
-
-    if (!slot || !startTime || !slot.events.length) {
-      stopSlotPlayback(index);
-      continue;
-    }
-
-    const length = slotLength(slot);
-    const elapsed = (now - startTime) % length;
-
-    // Use the slot's previous position to detect the exact crossing.
-    // This fixes the old 25 ms overlap that could trigger one recorded event
-    // on two consecutive animation frames, causing audible double hits.
-    let previous = slot._previousElapsed ?? null;
-    const wrapped = previous !== null && elapsed < previous;
-
-    fireCrossedEvents(slot, previous, elapsed, wrapped);
-    slot._previousElapsed = elapsed;
+  for (let i = 0; i < slots.length; i++) {
+    if (!playingSlots.has(i)) continue;
+    playSlotEventsAtPosition(i, previous, current, wrapped);
   }
 
-  const selectedSlotData = slots[selectedSlot];
-  if (selectedSlotData && selectedSlotData.events.length) {
-    const selectedElapsed =
-      (now - (slotPlaybackStart.get(selectedSlot) ?? now)) %
-      slotLength(selectedSlotData);
-
-    const beat = Math.floor(selectedElapsed / beatLength());
-
-    if (metronome && beat !== lastBeat) {
-      lastBeat = beat;
-      metronomeClick(beat % 4 === 0);
-    }
+  // Metronome follows the master clock.
+  const beat = Math.floor(current / secondsPerBeat());
+  if (metronome && beat !== lastBeat) {
+    lastBeat = beat;
+    metronomeClick(beat % 4 === 0);
   }
 
-  animationId = requestAnimationFrame(tick);
+  masterLastPosition = current;
+  masterAnimationId = requestAnimationFrame(masterTick);
 }
 // ---------------- RECORD / OVERDUB ----------------
+
+function quantizeTime(time) {
+  const mode = quantizeEl.value;
+  if (mode === "off") return time;
+
+  const divisions = {
+    "1/4": 1,
+    "1/8": 2,
+    "1/16": 4,
+    "1/32": 8
+  };
+
+  const d = divisions[mode];
+  if (!d) return time;
+
+  const grid = secondsPerBeat() / d;
+  return Math.round(time / grid) * grid;
+}
 
 function beginRecording() {
   ensureAudio();
 
-  currentLoop().events = [];
-  currentLoop().bpm = Number(bpmEl.value);
-  currentLoop().bars = Number(barsEl.value);
-  currentLoop()._previousElapsed = null;
+  const slot = currentLoop();
+  slot.events = [];
+  slot.bpm = Number(bpmEl.value);
+  slot.bars = Number(barsEl.value);
+  slot._recording = true;
+
+  // Recording starts on the current master position. If nothing is playing,
+  // this is zero. The resulting loop length is always musical.
+  masterLastPosition = 0;
+  masterStartTime = performance.now() / 1000;
+
+  playingSlots.add(selectedSlot);
+  transportRunning = true;
+  resetSlotSchedulers();
 
   recording = true;
   overdubbing = false;
-  loopStart = performance.now() / 1000;
-
-  // Recording is a selected-slot operation. Other slots keep playing.
-  startSlotPlayback(selectedSlot);
-  slotPlaybackStart.set(selectedSlot, loopStart);
-  currentLoop()._previousElapsed = null;
+  lastLiveHitAt.clear();
 
   $("record").classList.add("recording");
-  setStatus("RECORDING");
+  updateTransportStatus();
+  renderSlots();
+  renderEvents();
 
-  if (!animationId) {
-    previousElapsed = null;
-    animationId = requestAnimationFrame(tick);
+  if (!masterAnimationId) {
+    masterAnimationId = requestAnimationFrame(masterTick);
   }
+}
+
+function finishRecording() {
+  const slot = currentLoop();
+  const length = slotLength(slot);
+
+  slot.events = slot.events
+    .map(e => ({...e, time: Math.max(0, Math.min(e.time, length - 0.001))}))
+    .sort((a,b) => a.time - b.time);
+
+  slot._recording = false;
+  recording = false;
+  $("record").classList.remove("recording");
+
+  // The newly recorded loop immediately joins the master transport.
+  playingSlots.add(selectedSlot);
+
+  // Rebuild playback cursor.
+  const pos = currentMasterPosition();
+  let cursor = slot.events.findIndex(e => Number(e.time) > (pos % length));
+  if (cursor < 0) cursor = 0;
+  masterNextEvent.set(selectedSlot, cursor);
 
   renderSlots();
   renderEvents();
+  updateTransportStatus();
+}
+
+function toggleRecording() {
+  if (recording) {
+    finishRecording();
+    return;
+  }
+
+  beginRecording();
 }
 
 function toggleOverdub() {
   ensureAudio();
+
+  if (!currentLoop().events.length) {
+    beginRecording();
+    overdubbing = true;
+    updateTransportStatus();
+    return;
+  }
 
   if (!playingSlots.has(selectedSlot)) {
     startSlotPlayback(selectedSlot);
@@ -553,65 +687,23 @@ function toggleOverdub() {
   overdubbing = !overdubbing;
   recording = overdubbing;
 
-  updateTransportStatus();
-
-  if (!animationId) {
-    animationId = requestAnimationFrame(tick);
+  if (recording) {
+    loopStart = performance.now() / 1000;
+    lastLiveHitAt.clear();
   }
+
+  updateTransportStatus();
 }
 
-function runControl(name) {
-  switch (name) {
-    case "record":
-      recording ? stopPlayback() : beginRecording();
-      break;
-    case "play":
-      if (playingSlots.has(selectedSlot)) {
-        stopSlotPlayback(selectedSlot);
-        if (!playingSlots.size && animationId) {
-          cancelAnimationFrame(animationId);
-          animationId = null;
-          previousElapsed = null;
-          resetPosition();
-        }
-      } else {
-        startPlayback();
-      }
-      break;
-    case "overdub":
-      toggleOverdub();
-      break;
-    case "stop":
-      stopPlayback();
-      break;
-    case "clear":
-      stopSlotPlayback(selectedSlot);
-      currentLoop().events = [];
-      currentLoop()._previousElapsed = null;
-      renderSlots();
-      renderEvents();
-      setStatus("CLEARED");
-      break;
-    case "clearAll":
-      if (!confirm("Clear all 9 loop slots?")) return;
-      stopPlayback();
-      slots = Array.from({length:9}, () => ({
-        events: [], bpm:120, bars:4, _previousElapsed: null
-      }));
-      selectedSlot = 0;
-      renderSlots();
-      renderEvents();
-      resetPosition();
-      setStatus("ALL CLEARED");
-      break;
-    case "metronome":
-      metronome = !metronome;
-      updateControlBadges();
-      $("metronome").innerHTML =
-        `<span class="key-badge" data-control="metronome"></span> METRONOME: ${metronome ? "ON" : "OFF"}`;
-      updateControlBadges();
-      break;
-  }
+function recordedHitTime() {
+  const slot = currentLoop();
+  const len = slotLength(slot);
+
+  if (!transportRunning) return 0;
+
+  const now = performance.now() / 1000;
+  const pos = currentMasterPosition(now);
+  return pos % len;
 }
 
 // ---------------- MAPPING WINDOW ----------------
