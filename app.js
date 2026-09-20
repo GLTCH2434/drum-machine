@@ -202,9 +202,25 @@ function quantizeTime(time) {
   return Math.round(time / step) * step;
 }
 
+// Prevent accidental duplicate live hits caused by repeated/duplicate
+// input events from the browser or pointing device. Playback is never debounced.
+const LIVE_HIT_GUARD_MS = 55;
+const lastLiveHitAt = new Map();
+
 function triggerPad(key, fromPlayback = false) {
   const pad = padDefs.find(p => p[0] === key);
   if (!pad) return;
+
+  if (!fromPlayback) {
+    const nowMs = performance.now();
+    const previousMs = lastLiveHitAt.get(key) ?? -Infinity;
+
+    if (nowMs - previousMs < LIVE_HIT_GUARD_MS) {
+      return;
+    }
+
+    lastLiveHitAt.set(key, nowMs);
+  }
 
   playSample(pad[2]);
   flashPad(key);
@@ -669,13 +685,20 @@ quantizeEl.addEventListener("change", () => {
 
 // ---------------- KEYBOARD ----------------
 
+const heldKeys = new Set();
+
 document.addEventListener("keydown", event => {
   if (event.repeat) return;
   if (event.target.matches("input,select,textarea")) return;
-  if (mappingOverlay.classList.contains("open")) return;
 
   const key = normalizeKey(event);
   if (!key) return;
+
+  // Some browser/OS combinations can deliver duplicate keydown notifications.
+  // Treat a physical key as one hit until its keyup is received.
+  if (heldKeys.has(key)) return;
+  heldKeys.add(key);
+  if (mappingOverlay.classList.contains("open")) return;
 
   // 1–9 select slots; Shift+1–9 clears slots.
   if (/^[1-9]$/.test(key)) {
@@ -707,6 +730,15 @@ document.addEventListener("keydown", event => {
     event.preventDefault();
     runControl(control[0]);
   }
+});
+
+document.addEventListener("keyup", event => {
+  const key = normalizeKey(event);
+  if (key) heldKeys.delete(key);
+});
+
+window.addEventListener("blur", () => {
+  heldKeys.clear();
 });
 
 // ---------------- INIT ----------------

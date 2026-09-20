@@ -58,3 +58,9 @@ Default control mappings:
 Loop slots 1–9 remain fixed:
 - `1–9` select a slot
 - `Shift+1–9` clears a slot
+
+
+### V5 input fix
+- Added one-hit-per-key-down handling.
+- Added a 55 ms live-hit guard to prevent duplicate/multiple triggers during recording and overdub.
+- Playback-triggered events are not debounced.
