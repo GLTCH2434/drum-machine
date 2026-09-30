@@ -10,12 +10,13 @@ const DEF_PAD = {a:0,s:1,d:2,f:3,g:4,h:5,j:6,k:7,l:8,z:9,x:10,c:11};
 const DEF_CTL = {r:'record',' ':'playstop',t:'overdub',Escape:'stop',Backspace:'clearSel',m:'metro'};
 const CTLS = [['record','Record'],['playstop','Play / Stop'],['overdub','Overdub'],['stop','Stop'],['clearSel','Clear selected slot'],['clearAll','Clear all'],['metro','Metronome']];
 const QS = ['OFF','1/4','1/8','1/16','1/32'];
-const KP = 'drumLoopPadMapping', KC = 'drumLoopControlMapping';
+const KP = 'drumLoopPadMapping', KC = 'drumLoopControlMapping', KN = 'drumLoopPadNames';
 const DEF_URL = {}; ROWS.forEach(([n, , f]) => DEF_URL[n] = `samples/${f}.wav`);
 const custom = {}; // name -> loaded file name
 const readMap = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) || { ...d }; } catch { return { ...d }; } };
 const padMap = readMap(KP, DEF_PAD), ctlMap = readMap(KC, DEF_CTL);
-const saveMaps = () => { try { localStorage.setItem(KP, JSON.stringify(padMap)); localStorage.setItem(KC, JSON.stringify(ctlMap)); } catch {} };
+const padNames = readMap(KN, ROWS.reduce((o, [n, d]) => (o[n] = d, o), {}));
+const saveMaps = () => { try { localStorage.setItem(KP, JSON.stringify(padMap)); localStorage.setItem(KC, JSON.stringify(ctlMap)); localStorage.setItem(KN, JSON.stringify(padNames)); } catch {} };
 
 /* ---------- Audio ---------- */
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -244,7 +245,8 @@ function renderGrid() {
   const g = $('grid'); g.style.setProperty('--n', S.steps); g.innerHTML = ''; S.shown = -1;
   const p = S.pats[S.sel];
   ROWS.forEach((r, i) => {
-    const m = el('button', 'mute' + (S.muted[i] ? ' on' : ''), r[1]);
+    const displayName = padNames[r[0]] || r[1];
+    const m = el('button', 'mute' + (S.muted[i] ? ' on' : ''), displayName);
     m.title = 'Mute row'; m.onclick = () => { S.muted[i] = !S.muted[i]; m.classList.toggle('on'); };
     g.appendChild(m);
     for (let s = 0; s < S.steps; s++) {
@@ -277,6 +279,8 @@ function refreshPads() {
     const ks = Object.keys(padMap).filter(k => padMap[k] === i).map(k => k === ' ' ? 'Space' : k.toUpperCase());
     b.querySelector('small').textContent = ks.join(' ') || '—';
     const n = ROWS[PADS[i]][0];
+    const displayName = padNames[n] || ROWS[PADS[i]][1];
+    b.querySelector('span').textContent = displayName;
     b.title = custom[n] ? `Sample: ${custom[n]}` : 'Right-click to restore default sample';
   });
 }
@@ -339,7 +343,25 @@ function renderMap() {
   const sec = (title, items, map) => {
     b.appendChild(el('h3', '', title));
     items.forEach(([id, label]) => {
-      const r = el('div', 'mrow'); r.appendChild(el('span', '', label));
+      const r = el('div', 'mrow');
+      const isPad = title === 'PAD MAPPINGS';
+      if (isPad) {
+        const padName = ROWS[PADS[id]][0];
+        const inp = el('input', '', ''); inp.type = 'text'; inp.value = padNames[padName] || ROWS[PADS[id]][1];
+        inp.style.width = '120px'; inp.title = 'Edit pad name';
+        inp.onchange = () => { padNames[padName] = inp.value.trim() || ROWS[PADS[id]][1]; saveMaps(); refreshPads(); };
+        r.appendChild(inp);
+        const loadBtn = el('button', 'chip', 'Load sample'); loadBtn.title = 'Load custom sample for this pad';
+        loadBtn.onclick = () => { pendingLoad = padName; loadFile.value = ''; loadFile.click(); };
+        r.appendChild(loadBtn);
+        if (custom[padName]) {
+          const rstBtn = el('button', 'chip', 'Restore default'); rstBtn.title = 'Restore default sample';
+          rstBtn.onclick = () => { restoreDefault(padName); };
+          r.appendChild(rstBtn);
+        }
+      } else {
+        r.appendChild(el('span', '', label));
+      }
       Object.keys(map).filter(k => map[k] === id).forEach(k => {
         const c = el('button', 'chip', (k === ' ' ? 'Space' : k) + ' ×'); c.title = 'Remove this mapping';
         c.onclick = () => { delete map[k]; saveMaps(); renderMap(); }; r.appendChild(c);
@@ -348,7 +370,7 @@ function renderMap() {
       a.onclick = () => { capture = { id, map }; renderMap(); }; r.appendChild(a); b.appendChild(r);
     });
   };
-  sec('PAD MAPPINGS', PADS.map((r, i) => [i, `Pad ${i + 1}: ${ROWS[r][1]}`]), padMap);
+  sec('PAD MAPPINGS', PADS.map((r, i) => [i, `Pad ${i + 1}`]), padMap);
   sec('LOOP CONTROL MAPPINGS', CTLS, ctlMap);
   refreshPads();
 }
@@ -368,10 +390,6 @@ for (let i = 0; i < 9; i++) {
 let pendingLoad = null;
 PADS.forEach((r, i) => {
   const p = el('button', 'pad'); p.appendChild(el('span', '', ROWS[r][1])); p.appendChild(el('small', ''));
-  const ld = el('small', 'chip', 'load sample'); ld.title = 'Load your own sample file for this pad';
-  ld.onpointerdown = e => e.stopPropagation();
-  ld.onclick = () => { pendingLoad = ROWS[r][0]; loadFile.value = ''; loadFile.click(); };
-  p.appendChild(ld);
   p.oncontextmenu = e => { e.preventDefault(); if (custom[ROWS[r][0]]) restoreDefault(ROWS[r][0]); };
   p.onpointerdown = e => { e.preventDefault(); hitPad(i); }; $('pads').appendChild(p);
 });
