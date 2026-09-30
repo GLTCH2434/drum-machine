@@ -11,6 +11,8 @@ const DEF_CTL = {r:'record',' ':'playstop',t:'overdub',Escape:'stop',Backspace:'
 const CTLS = [['record','Record'],['playstop','Play / Stop'],['overdub','Overdub'],['stop','Stop'],['clearSel','Clear selected slot'],['clearAll','Clear all'],['metro','Metronome']];
 const QS = ['OFF','1/4','1/8','1/16','1/32'];
 const KP = 'drumLoopPadMapping', KC = 'drumLoopControlMapping';
+const DEF_URL = {}; ROWS.forEach(([n, , f]) => DEF_URL[n] = `samples/${f}.wav`);
+const custom = {}; // name -> loaded file name
 const readMap = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) || { ...d }; } catch { return { ...d }; } };
 const padMap = readMap(KP, DEF_PAD), ctlMap = readMap(KC, DEF_CTL);
 const saveMaps = () => { try { localStorage.setItem(KP, JSON.stringify(padMap)); localStorage.setItem(KC, JSON.stringify(ctlMap)); } catch {} };
@@ -18,20 +20,82 @@ const saveMaps = () => { try { localStorage.setItem(KP, JSON.stringify(padMap));
 /* ---------- Audio ---------- */
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
 const buf = {};
+async function loadSample(n) {
+  const r = await fetch(DEF_URL[n]);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  buf[n] = await ctx.decodeAudioData(await r.arrayBuffer());
+}
 async function loadAll() {
-  await Promise.all(ROWS.map(async ([n, , f]) => {
-    const url = `samples/${f}.wav`;
-    try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      buf[n] = await ctx.decodeAudioData(await r.arrayBuffer());
-    } catch (e) { console.warn('Could not load sample:', url, e); }
-  }));
+  await Promise.all(ROWS.map(([n]) => loadSample(n).catch(e => console.warn('Could not load sample:', DEF_URL[n], e))));
+}
+async function restoreDefault(n) {
+  delete custom[n];
+  try { await loadSample(n); } catch { delete buf[n]; }
+  refreshPads();
 }
 const wake = () => { if (ctx.state === 'suspended') ctx.resume(); };
 addEventListener('pointerdown', wake); addEventListener('keydown', wake);
 
 const lastLive = {};
+const REC = { on: false, items: [], t0: 0, timer: 0 };
+
+function recToggle() {
+  REC.on = !REC.on;
+  $('recBtn').classList.toggle('on', REC.on);
+  if (REC.on) {
+    REC.items = []; REC.t0 = performance.now();
+    REC.timer = setInterval(() => {
+      const s = Math.floor((performance.now() - REC.t0) / 1000);
+      $('recBtn').textContent = `REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }, 250);
+  } else {
+    clearInterval(REC.timer);
+    $('recBtn').textContent = 'Record session';
+  }
+}
+
+function encodeWav(b) {
+  const n = b.numberOfChannels, len = b.length, sr = b.sampleRate;
+  const bytes = 44 + len * n * 2, ab = new ArrayBuffer(bytes), v = new DataView(ab);
+  const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0, 'RIFF'); v.setUint32(4, bytes - 8, true); ws(8, 'WAVE'); ws(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, n, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * n * 2, true);
+  v.setUint16(32, n * 2, true); v.setUint16(34, 16, true);
+  ws(36, 'data'); v.setUint32(40, len * n * 2, true);
+  const ch = Array.from({ length: n }, (_, i) => b.getChannelData(i));
+  let off = 44;
+  for (let i = 0; i < len; i++) for (let c = 0; c < n; c++) {
+    const s = Math.max(-1, Math.min(1, ch[c][i]));
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true); off += 2;
+  }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+async function exportWav() {
+  if (!REC.items.length) { alert('Nothing recorded yet.'); return; }
+  let t0 = Infinity, t1 = 0;
+  for (const i of REC.items) {
+    t0 = Math.min(t0, i.t);
+    const b = buf[i.name];
+    if (b) t1 = Math.max(t1, i.t + b.length / b.sampleRate);
+  }
+  const sr = 44100, oc = new OfflineAudioContext(2, Math.ceil((t1 - t0 + .5) * sr), sr);
+  $('expBtn').textContent = 'Rendering…';
+  try {
+    for (const { t, name } of REC.items) {
+      const b = buf[name]; if (!b) continue;
+      const s = oc.createBufferSource(); s.buffer = b; s.connect(oc.destination); s.start(Math.max(0, t - t0));
+    }
+    const blob = encodeWav(await oc.startRendering());
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `drum-session-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.wav`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { console.warn('Export failed:', e); }
+  finally { $('expBtn').textContent = 'Export WAV'; }
+}
+
 function playSample(name, fromPlayback = false, when = 0) {
   const b = buf[name];
   if (!b) return false;
@@ -40,6 +104,7 @@ function playSample(name, fromPlayback = false, when = 0) {
     if (t - (lastLive[name] || 0) < 80) return false;
     lastLive[name] = t;
   }
+  if (REC.on) REC.items.push({ t: when || ctx.currentTime, name });
   const s = ctx.createBufferSource();
   s.buffer = b; s.connect(ctx.destination); s.start(when);
   return true;
@@ -211,6 +276,8 @@ function refreshPads() {
   document.querySelectorAll('.pad').forEach((b, i) => {
     const ks = Object.keys(padMap).filter(k => padMap[k] === i).map(k => k === ' ' ? 'Space' : k.toUpperCase());
     b.querySelector('small').textContent = ks.join(' ') || '—';
+    const n = ROWS[PADS[i]][0];
+    b.title = custom[n] ? `Sample: ${custom[n]}` : 'Right-click to restore default sample';
   });
 }
 function setMode(m) {
@@ -298,10 +365,26 @@ for (let i = 0; i < 9; i++) {
   const lb = el('button', '', i + 1); lb.onclick = () => loopSelect(i); $('loopSlots').appendChild(lb);
   const sb = el('button', '', i + 1); sb.onclick = () => { seqSelect(i); }; $('seqSlots').appendChild(sb);
 }
+let pendingLoad = null;
 PADS.forEach((r, i) => {
   const p = el('button', 'pad'); p.appendChild(el('span', '', ROWS[r][1])); p.appendChild(el('small', ''));
+  const ld = el('small', 'chip', 'load sample'); ld.title = 'Load your own sample file for this pad';
+  ld.onpointerdown = e => e.stopPropagation();
+  ld.onclick = () => { pendingLoad = ROWS[r][0]; loadFile.value = ''; loadFile.click(); };
+  p.appendChild(ld);
+  p.oncontextmenu = e => { e.preventDefault(); if (custom[ROWS[r][0]]) restoreDefault(ROWS[r][0]); };
   p.onpointerdown = e => { e.preventDefault(); hitPad(i); }; $('pads').appendChild(p);
 });
+$('loadFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f || !pendingLoad) return;
+  try {
+    buf[pendingLoad] = await ctx.decodeAudioData(await f.arrayBuffer());
+    custom[pendingLoad] = f.name; refreshPads();
+  } catch (err) { console.warn('Could not decode sample:', f.name, err); alert('Could not decode that file as audio.'); }
+  pendingLoad = null;
+};
+$('recBtn').onclick = recToggle;
+$('expBtn').onclick = exportWav;
 $('tabLoop').onclick = () => setMode('loop'); $('tabSeq').onclick = () => setMode('seq');
 
 $('lRec').onclick = loopRecord; $('lPlay').onclick = loopPlayStop; $('lOver').onclick = loopOverdub; $('lStop').onclick = loopGlobalStop;

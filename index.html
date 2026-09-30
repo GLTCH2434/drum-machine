@@ -9,6 +9,8 @@
 <body>
 <header>
   <h1>Drum Loop Station</h1>
+  <button id="recBtn">Record session</button>
+  <button id="expBtn">Export WAV</button>
   <button id="mapBtn">Key mapping</button>
 </header>
 <nav>
@@ -66,6 +68,7 @@
     </div>
   </div>
 </div>
+<input type="file" id="loadFile" accept="audio/*" hidden>
 <script src="app.js"></script>
 </body>
 </html>
